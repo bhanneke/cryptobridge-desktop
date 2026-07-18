@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CryptoBridge</title>
+  <meta name="description" content="Non-custodial desktop companion for P2P bitcoin on-ramps. UI prototype running against a mock backend." />
+  <meta name="theme-color" content="#6366F1" />
+
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%236366F1'/%3E%3Cstop offset='1' stop-color='%238B5CF6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-family='system-ui,sans-serif' font-size='34' font-weight='700' fill='white'%3EC%3C/text%3E%3C/svg%3E" />
+
+  <!-- Everything ships with the app: vendored fonts, compiled Tailwind, no CDN. -->
+  <link rel="stylesheet" href="vendor/fonts/fonts.css" />
+  <link rel="stylesheet" href="tailwind.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body class="min-h-screen bg-bg text-ink font-sans antialiased">
+
+  <!-- Top app bar -->
+  <header class="fixed top-0 inset-x-0 z-50 h-14 bg-surface/90 backdrop-blur-md border-b border-line">
+    <div class="max-w-3xl mx-auto h-full px-4 sm:px-6 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <button id="backBtn" class="hidden h-9 w-9 -ml-1 rounded-lg hover:bg-bg flex items-center justify-center text-ink2" aria-label="Back">
+          <span class="material-symbols-outlined text-[20px]">arrow_back</span>
+        </button>
+        <a href="#" class="flex items-center gap-2">
+          <span class="grid place-items-center h-7 w-7 rounded-lg bg-gradient-to-br from-indigo to-violet text-white text-[14px] font-bold">C</span>
+          <span class="font-semibold tracking-tight">CryptoBridge</span>
+        </a>
+      </div>
+      <div class="flex items-center gap-3">
+        <div id="backendPill" class="backend-pill" data-status="connecting" title="Trading backend the OnrampAdapter is connected to">
+          <span class="backend-dot" aria-hidden="true"></span>
+          <span id="backendLabel">connecting…</span>
+        </div>
+        <div id="stepIndicator" class="text-[13px] font-medium text-ink2 tabular-nums">Step 1 of 6</div>
+      </div>
+    </div>
+    <!-- Progress strip -->
+    <div class="h-[3px] w-full bg-bg">
+      <div id="progressBar" class="h-full bg-gradient-to-r from-indigo to-violet transition-[width] duration-500 ease-out" style="width: 16.66%"></div>
+    </div>
+  </header>
+
+  <main class="pt-20 pb-32">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6">
+
+      <!-- ============================================ -->
+      <!-- STEP 1 — Welcome                              -->
+      <!-- ============================================ -->
+      <section data-step="1" class="step active">
+        <div class="relative flex flex-col items-center text-center gap-8 py-8">
+          <!-- Ambient aurora backdrop -->
+          <div class="aurora" aria-hidden="true">
+            <span class="aurora-blob aurora-blob--indigo"></span>
+            <span class="aurora-blob aurora-blob--violet"></span>
+            <span class="aurora-blob aurora-blob--mint"></span>
+          </div>
+
+          <div class="hero-badge relative">
+            <div class="relative h-24 w-24 rounded-full bg-surface border border-line shadow-card grid place-items-center overflow-hidden">
+              <div class="absolute inset-0 bg-gradient-to-br from-indigo/10 to-violet/10"></div>
+              <span class="material-symbols-outlined text-[40px] text-ink" style="font-variation-settings: 'FILL' 1;">account_balance</span>
+            </div>
+            <span class="hero-orbit" aria-hidden="true"><span class="hero-orbit-dot">◆</span></span>
+          </div>
+
+          <div class="relative flex flex-col gap-3 max-w-md">
+            <h1 class="text-[32px] sm:text-[36px] leading-[1.1] tracking-[-0.02em] font-semibold">
+              Move euros to crypto.<br>In a few taps.
+            </h1>
+            <p class="text-[15px] text-ink2 max-w-sm mx-auto">
+              Peer-to-peer, self-custody, no exchange account. Your money never touches our servers — there are none.
+            </p>
+          </div>
+
+          <div class="relative flex flex-col w-full max-w-sm gap-5 pt-2">
+            <button class="btn-primary" data-action="next">
+              Continue with bank
+              <span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+            </button>
+            <div class="flex flex-wrap items-center justify-center gap-2">
+              <span class="chip"><span class="material-symbols-outlined text-[16px]">verified_user</span>P2P trade</span>
+              <span class="chip"><span class="material-symbols-outlined text-[16px]">key</span>Self-custody</span>
+              <span class="chip"><span class="material-symbols-outlined text-[16px]">no_accounts</span>No account, no KYC upload</span>
+            </div>
+          </div>
+
+          <dl class="relative grid grid-cols-3 gap-3 w-full max-w-md pt-4">
+            <div class="stat-tile">
+              <dt class="text-[11px] uppercase tracking-wider text-ink2">Custody</dt>
+              <dd class="text-[20px] font-semibold tabular-nums">Yours</dd>
+            </div>
+            <div class="stat-tile">
+              <dt class="text-[11px] uppercase tracking-wider text-ink2">Servers</dt>
+              <dd class="text-[20px] font-semibold tabular-nums">0</dd>
+            </div>
+            <div class="stat-tile">
+              <dt class="text-[11px] uppercase tracking-wider text-ink2">Custody fee</dt>
+              <dd class="text-[20px] font-semibold tabular-nums">€ 0</dd>
+            </div>
+          </dl>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <!-- STEP 2 — Choose bank (demo fiction)           -->
+      <!-- ============================================ -->
+      <section data-step="2" class="step">
+        <div class="flex flex-col gap-6">
+          <div class="flex flex-col gap-2">
+            <h1 class="text-[28px] sm:text-[32px] leading-tight tracking-[-0.02em] font-semibold">Choose your bank</h1>
+            <p class="text-[15px] text-ink2">Select your primary institution to securely link your account.</p>
+          </div>
+
+          <label class="relative block">
+            <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-ink2 text-[20px]">search</span>
+            <input id="bankSearch" type="search" placeholder="Search 1,400+ supported banks" autocomplete="off"
+              class="w-full h-12 pl-12 pr-4 bg-surface border border-line rounded-xl2 text-[15px] placeholder:text-muted focus:outline-none focus:border-indigo focus:shadow-ring transition" />
+          </label>
+
+          <div id="bankGrid" class="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <!-- bank tiles injected by app.js -->
+          </div>
+
+          <div id="bankEmpty" class="hidden flex-col items-center gap-2 py-10 text-center">
+            <span class="material-symbols-outlined text-[32px] text-muted">search_off</span>
+            <p class="text-[14px] text-ink2">No matching bank in the demo set.</p>
+            <p class="text-[13px] text-muted">The full product would search 1,400+ PSD2 institutions.</p>
+          </div>
+        </div>
+
+        <!-- Sticky bottom CTA -->
+        <div class="fixed inset-x-0 bottom-0 z-40 bg-surface/90 backdrop-blur-md border-t border-line">
+          <div class="max-w-3xl mx-auto px-4 sm:px-6 py-3 flex flex-col items-center gap-2">
+            <button id="connectBankBtn" class="btn-primary w-full max-w-md is-disabled" disabled data-action="next">
+              Connect via PSD2
+            </button>
+            <div class="flex items-center gap-1.5 text-[13px] text-ink2">
+              <span class="material-symbols-outlined text-[16px]">lock</span>
+              You'll be redirected to your bank's secure login
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <!-- STEP 3 — Your accounts (demo fiction)         -->
+      <!-- ============================================ -->
+      <section data-step="3" class="step">
+        <div class="flex flex-col gap-6">
+          <div class="flex flex-col gap-2">
+            <h1 class="text-[28px] sm:text-[32px] leading-tight tracking-[-0.02em] font-semibold">
+              Your accounts at <span id="bankNameLabel">your bank</span>
+            </h1>
+            <p class="text-[15px] text-ink2">Select the account you wish to connect to CryptoBridge.</p>
+          </div>
+
+          <div class="flex flex-col gap-3">
+            <button class="account-card group" data-account="1">
+              <div class="flex justify-between items-start w-full gap-4">
+                <div class="flex flex-col items-start gap-1">
+                  <span class="text-[13px] text-ink2">Checking</span>
+                  <span class="text-[28px] font-semibold tabular-nums" data-balance="1">€ 2,547.35</span>
+                  <span class="text-[12px] font-mono text-muted mt-1">DE89 1001 1001 1234 5678 90</span>
+                </div>
+                <div class="flex flex-col items-end gap-3">
+                  <svg class="w-16 h-8 stroke-ink fill-none opacity-50 group-hover:opacity-100 transition" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 100 30">
+                    <path d="M0,20 L10,18 L20,22 L30,15 L40,19 L50,10 L60,15 L70,5 L80,12 L90,2 L100,8"></path>
+                  </svg>
+                  <span class="pill-select">Select <span class="material-symbols-outlined text-[14px]">arrow_forward</span></span>
+                </div>
+              </div>
+            </button>
+
+            <button class="account-card group" data-account="2">
+              <div class="flex justify-between items-start w-full gap-4">
+                <div class="flex flex-col items-start gap-1">
+                  <span class="text-[13px] text-ink2">Savings</span>
+                  <span class="text-[28px] font-semibold tabular-nums" data-balance="2">€ 15,832.42</span>
+                  <span class="text-[12px] font-mono text-muted mt-1">DE89 1001 1001 9876 5432 10</span>
+                </div>
+                <div class="flex flex-col items-end gap-3">
+                  <svg class="w-16 h-8 stroke-ink fill-none opacity-50 group-hover:opacity-100 transition" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 100 30">
+                    <path d="M0,25 L10,24 L20,20 L30,18 L40,15 L50,12 L60,8 L70,10 L80,5 L90,3 L100,2"></path>
+                  </svg>
+                  <span class="pill-select">Select <span class="material-symbols-outlined text-[14px]">arrow_forward</span></span>
+                </div>
+              </div>
+            </button>
+
+            <button class="account-card group" data-account="3">
+              <div class="flex justify-between items-start w-full gap-4">
+                <div class="flex flex-col items-start gap-1">
+                  <span class="text-[13px] text-ink2">Investment</span>
+                  <span class="text-[28px] font-semibold tabular-nums" data-balance="3">€ 8,721.90</span>
+                  <span class="text-[12px] font-mono text-muted mt-1">DE89 1001 1001 2468 1357 90</span>
+                </div>
+                <div class="flex flex-col items-end gap-3">
+                  <svg class="w-16 h-8 stroke-ink fill-none opacity-50 group-hover:opacity-100 transition" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 100 30">
+                    <path d="M0,15 L10,25 L20,20 L30,22 L40,10 L50,15 L60,5 L70,12 L80,2 L90,8 L100,0"></path>
+                  </svg>
+                  <span class="pill-select">Select <span class="material-symbols-outlined text-[14px]">arrow_forward</span></span>
+                </div>
+              </div>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <!-- STEP 4 — Bridge                               -->
+      <!-- ============================================ -->
+      <section data-step="4" class="step">
+        <div class="flex flex-col gap-2 mb-6 text-center">
+          <h1 class="text-[28px] sm:text-[32px] leading-tight tracking-[-0.02em] font-semibold">Bridge your balance</h1>
+          <p class="text-[15px] text-ink2">Slide to transfer euros into your self-custodial crypto balance.</p>
+        </div>
+
+        <div class="relative">
+          <!-- Bank card (top) -->
+          <div class="bg-surface border border-line rounded-t-xl2 p-6 shadow-card relative z-10">
+            <div class="flex justify-between items-center">
+              <span class="text-[11px] uppercase tracking-wider text-ink2 font-medium">Bank balance</span>
+              <span class="material-symbols-outlined text-muted">account_balance</span>
+            </div>
+            <div class="mt-2 text-[32px] font-semibold tracking-tight tabular-nums" id="bankAmount">€ 5,000.00</div>
+            <div class="w-full h-2 bg-bg rounded-full overflow-hidden mt-3">
+              <div id="bankFill" class="h-full bg-ink rounded-full transition-[width] duration-150" style="width:100%"></div>
+            </div>
+          </div>
+
+          <!-- Slider strip (middle) -->
+          <div class="relative bg-surface border-x border-line px-6 py-5 z-20 shadow-[0_4px_8px_-2px_rgba(11,18,32,0.06)]">
+            <div class="relative h-6 flex items-center">
+              <div class="absolute inset-x-0 h-1.5 bg-bg rounded-full">
+                <div id="sliderFill" class="h-full rounded-full bg-gradient-to-r from-indigo to-violet" style="width:0%"></div>
+              </div>
+              <input id="bridgeSlider" type="range" min="0" max="100" value="0"
+                class="absolute inset-0 w-full h-full opacity-0 z-30 cursor-pointer" />
+              <div id="sliderThumb" class="absolute h-6 w-6 -ml-3 rounded-full bg-white border border-line shadow-card grid place-items-center pointer-events-none" style="left:0%">
+                <span class="h-2 w-2 rounded-full bg-gradient-to-br from-indigo to-violet"></span>
+              </div>
+            </div>
+            <div class="flex justify-between text-[11px] text-muted mt-3 tabular-nums px-0.5">
+              <span data-tick="0">0%</span>
+              <span data-tick="25">25%</span>
+              <span data-tick="50">50%</span>
+              <span data-tick="75">75%</span>
+              <span data-tick="100">100%</span>
+            </div>
+          </div>
+
+          <!-- Particle canvas overlay (between cards) -->
+          <canvas id="bridgeCanvas" class="absolute inset-0 w-full h-full pointer-events-none z-[15]"></canvas>
+
+          <!-- Crypto card (bottom) -->
+          <div class="bg-dark text-white border-x border-b border-line rounded-b-xl2 p-6 relative z-10 overflow-hidden">
+            <div class="flex justify-between items-center">
+              <span class="text-[11px] uppercase tracking-wider text-white/60 font-medium">Crypto balance</span>
+              <span class="material-symbols-outlined text-mint">data_exploration</span>
+            </div>
+            <div class="mt-2 text-[32px] font-semibold tracking-tight tabular-nums text-mint" id="cryptoAmount">€ 0,00</div>
+            <div class="w-full h-2 bg-dark3 rounded-full overflow-hidden mt-3">
+              <div id="cryptoFill" class="h-full bg-mint rounded-full transition-[width] duration-150" style="width:0%"></div>
+            </div>
+            <!-- Ambient binary -->
+            <div class="binary-strip" aria-hidden="true">10110100 01001011 11001010 01101001 10100110 01011010</div>
+          </div>
+        </div>
+
+        <div class="flex flex-col items-center gap-3 mt-6">
+          <p class="text-[13px] text-ink2 bg-surface border border-line rounded-full px-4 py-1.5 shadow-card">
+            You will bridge <strong id="bridgeAmountText" class="text-ink font-semibold tabular-nums">€ 0,00</strong>
+          </p>
+          <button id="confirmBridgeBtn" class="btn-primary w-full max-w-md is-disabled" disabled>
+            Confirm bridge
+            <span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+          </button>
+          <p class="text-[12px] text-muted">P2P trade through the connected backend · fiat leg is a SEPA transfer</p>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <!-- STEP 5 — Portfolio                            -->
+      <!-- ============================================ -->
+      <section data-step="5" class="step">
+        <div class="flex flex-col gap-8">
+          <div>
+            <h1 class="text-[28px] sm:text-[32px] leading-tight tracking-[-0.02em] font-semibold">Your portfolio</h1>
+            <p class="text-[15px] text-ink2 mt-1">Bridge transaction complete. Funds are ready.</p>
+          </div>
+
+          <!-- Hero crypto card -->
+          <section class="bg-dark2 text-white rounded-xl2 p-6 relative overflow-hidden border border-dark3 shadow-[0_8px_24px_rgba(11,18,32,0.1)]">
+            <div class="absolute -top-10 -right-10 w-48 h-48 bg-mint/10 rounded-full blur-3xl"></div>
+            <div class="flex justify-between items-start z-10 relative">
+              <div class="flex flex-col gap-1">
+                <span class="text-[13px] text-white/60">Bridged balance</span>
+                <div class="flex items-baseline gap-2">
+                  <h2 class="text-[32px] font-semibold tracking-tight tabular-nums text-white" id="portfolioAmount">€ 0,00</h2>
+                  <span class="text-[14px] text-mint">+2.4%</span>
+                </div>
+                <span id="portfolioSats" class="text-[13px] text-white/50 tabular-nums"></span>
+              </div>
+              <div class="flex items-center gap-1.5 bg-mint/10 px-3 py-1 rounded-full border border-mint/30">
+                <span class="material-symbols-outlined text-mint text-[16px]" style="font-variation-settings: 'FILL' 1;">bolt</span>
+                <span class="text-[12px] font-medium text-mint">Bridged</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-8 mt-5 pt-4 border-t border-dark3 relative z-10">
+              <div class="flex flex-col">
+                <span class="text-[13px] text-white/60">Asset</span>
+                <div class="flex items-center gap-2 mt-1">
+                  <div class="h-6 w-6 rounded-full bg-white/10 grid place-items-center">
+                    <span class="material-symbols-outlined text-[14px] text-white">currency_bitcoin</span>
+                  </div>
+                  <span class="font-medium text-white" id="assetLabel">BTC</span>
+                </div>
+              </div>
+              <div class="flex flex-col">
+                <span class="text-[13px] text-white/60">Backend</span>
+                <div class="flex items-center gap-2 mt-1">
+                  <div class="h-6 w-6 rounded-full bg-dark grid place-items-center border border-dark3">
+                    <span class="material-symbols-outlined text-[14px] text-white">lan</span>
+                  </div>
+                  <span class="font-medium text-white" id="networkLabel">—</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Holdings (appears once you buy art or open positions) -->
+          <section id="holdingsSection" class="hidden flex-col gap-3">
+            <h3 class="text-[20px] font-semibold tracking-[-0.01em]">Your assets</h3>
+            <div id="holdingsList" class="flex flex-col gap-2"></div>
+          </section>
+
+          <!-- Explore what's next -->
+          <section class="flex flex-col gap-3">
+            <h3 class="text-[20px] font-semibold tracking-[-0.01em]">Explore what's next</h3>
+            <div class="flex flex-col gap-2">
+              <button class="explore-card" data-explore="assets">
+                <div class="flex items-center gap-4">
+                  <div class="explore-icon"><span class="material-symbols-outlined">search</span></div>
+                  <div class="flex flex-col text-left">
+                    <span class="font-semibold">Discover assets</span>
+                    <span class="text-[13px] text-ink2">Find top performing tokens</span>
+                  </div>
+                </div>
+                <span class="material-symbols-outlined text-ink2">chevron_right</span>
+              </button>
+              <button class="explore-card" data-explore="savings">
+                <div class="flex items-center gap-4">
+                  <div class="explore-icon"><span class="material-symbols-outlined">savings</span></div>
+                  <div class="flex flex-col text-left">
+                    <span class="font-semibold">Earn yield</span>
+                    <span class="text-[13px] text-ink2">Stake assets for rewards</span>
+                  </div>
+                </div>
+                <span class="material-symbols-outlined text-ink2">chevron_right</span>
+              </button>
+              <button class="explore-card" data-explore="swap">
+                <div class="flex items-center gap-4">
+                  <div class="explore-icon"><span class="material-symbols-outlined">swap_calls</span></div>
+                  <div class="flex flex-col text-left">
+                    <span class="font-semibold">Swap tokens</span>
+                    <span class="text-[13px] text-ink2">Trade instantly on L2</span>
+                  </div>
+                </div>
+                <span class="material-symbols-outlined text-ink2">chevron_right</span>
+              </button>
+            </div>
+          </section>
+
+          <!-- Connected funding sources -->
+          <section class="flex flex-col gap-3">
+            <h3 class="text-[20px] font-semibold tracking-[-0.01em]">Connected funding sources</h3>
+            <div id="connectedAccounts" class="flex flex-col gap-2">
+              <!-- populated by app.js -->
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <!-- ============================================ -->
+      <!-- STEP 6 — Explore                              -->
+      <!-- ============================================ -->
+      <section data-step="6" class="step">
+        <div class="flex flex-col gap-6">
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <h1 class="text-[28px] sm:text-[32px] leading-tight tracking-[-0.02em] font-semibold">Explore ecosystem</h1>
+            <div id="walletPill" class="wallet-pill" title="Bridged, self-custodied balance">
+              <span class="material-symbols-outlined text-[16px] text-mint">account_balance_wallet</span>
+              <span id="walletBalance" class="tabular-nums">€ 0,00</span>
+            </div>
+          </div>
+
+          <div class="inline-flex p-1 bg-surface border border-line rounded-xl2 max-w-md">
+            <button class="tab-btn active" data-tab="assets">Digital Assets</button>
+            <button class="tab-btn" data-tab="savings">Savings</button>
+            <button class="tab-btn" data-tab="swap">Swap</button>
+          </div>
+
+          <!-- Tab: Assets -->
+          <div data-tab-panel="assets" class="tab-panel">
+            <div class="flex justify-between items-end mb-4">
+              <div>
+                <h2 class="text-[22px] font-semibold tracking-[-0.01em]">Curated collections</h2>
+                <p class="text-[14px] text-ink2 mt-0.5">Discover premium digital art and collectibles.</p>
+              </div>
+              <button class="text-[13px] font-medium flex items-center gap-1 hover:opacity-80">View all <span class="material-symbols-outlined text-[16px]">arrow_forward</span></button>
+            </div>
+            <div id="artGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <!-- art cards injected by app.js -->
+            </div>
+          </div>
+
+          <!-- Tab: Savings -->
+          <div data-tab-panel="savings" class="tab-panel hidden">
+            <div class="mb-4">
+              <h2 class="text-[22px] font-semibold tracking-[-0.01em]">Yield matrix</h2>
+              <p class="text-[14px] text-ink2 mt-0.5">
+                <span id="savingsCount" class="font-semibold tabular-nums text-ink">47</span> saving options · adjust risk to view APY projections.
+              </p>
+            </div>
+
+            <div class="card p-5 flex flex-col gap-6">
+              <div class="flex flex-col gap-3">
+                <div class="flex justify-between text-[12px] font-medium">
+                  <span class="text-ink2">Conservative</span>
+                  <span id="riskLabel" class="text-ink">Balanced (Level 3)</span>
+                  <span class="text-ink2">Aggressive</span>
+                </div>
+                <div class="relative h-2 bg-bg rounded-full">
+                  <div id="riskFill" class="absolute left-0 top-0 h-full rounded-full bg-gradient-to-r from-indigo to-violet" style="width:50%"></div>
+                  <input id="riskSlider" type="range" min="1" max="5" value="3" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                </div>
+                <div class="flex justify-between text-[11px] text-ink2 tabular-nums">
+                  <span>1.5%</span><span>2.8%</span><span>4.2%</span><span>6.5%</span><span>9.8%</span>
+                </div>
+              </div>
+
+              <div id="yieldProduct" class="bg-bg rounded-xl2 p-4 border border-line">
+                <div class="flex justify-between items-start mb-2">
+                  <div class="flex items-center gap-2">
+                    <div class="h-9 w-9 rounded-lg bg-surface border border-line grid place-items-center">
+                      <span class="material-symbols-outlined text-[18px]">account_balance</span>
+                    </div>
+                    <div>
+                      <h4 class="font-semibold" id="productTitle">Balanced Yield Strategy</h4>
+                      <span class="text-[12px] text-ink2" id="productSub">Medium risk · 30d lock</span>
+                    </div>
+                  </div>
+                  <div class="text-right">
+                    <div class="text-[20px] font-semibold text-mint tabular-nums" id="productApy">4.2%</div>
+                    <div class="text-[10px] uppercase tracking-wider text-ink2">Est. APY</div>
+                  </div>
+                </div>
+                <button id="investBtn" class="btn-secondary w-full mt-3">Review term sheet &amp; invest</button>
+              </div>
+            </div>
+
+            <div id="yieldPositions" class="hidden mt-4 flex-col gap-2">
+              <h3 class="text-[16px] font-semibold tracking-[-0.01em]">Your active positions</h3>
+              <div id="yieldPositionsList" class="flex flex-col gap-2"></div>
+            </div>
+          </div>
+
+          <!-- Tab: Swap -->
+          <div data-tab-panel="swap" class="tab-panel hidden">
+            <div class="mb-4">
+              <h2 class="text-[22px] font-semibold tracking-[-0.01em]">Instant swap</h2>
+              <p class="text-[14px] text-ink2 mt-0.5">Zero slippage on major pairs.</p>
+            </div>
+            <div class="card p-5 relative max-w-md">
+              <div class="bg-bg rounded-xl2 p-4 border border-transparent focus-within:border-indigo focus-within:shadow-ring transition">
+                <label for="swapPay" class="text-[12px] text-ink2 block mb-1">You pay</label>
+                <div class="flex justify-between items-center gap-3">
+                  <input id="swapPay" type="text" inputmode="decimal" value="1.5" class="bg-transparent border-none text-[26px] font-semibold w-1/2 outline-none tabular-nums" />
+                  <button class="token-btn">
+                    <span class="h-6 w-6 rounded-full bg-ink text-white text-[10px] font-bold grid place-items-center">ETH</span>
+                    <span>ETH</span><span class="material-symbols-outlined text-[16px]">expand_more</span>
+                  </button>
+                </div>
+                <div id="swapPayEur" class="text-[12px] text-ink2 mt-1 tabular-nums">€ 4.821,30</div>
+              </div>
+
+              <div class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-surface border border-line rounded-full p-1 z-10 shadow-card">
+                <div class="bg-bg rounded-full p-1.5 text-ink2">
+                  <span class="material-symbols-outlined text-[18px]">arrow_downward</span>
+                </div>
+              </div>
+
+              <div class="bg-bg rounded-xl2 p-4 border border-transparent mt-2 focus-within:border-indigo focus-within:shadow-ring transition">
+                <label for="swapReceive" class="text-[12px] text-ink2 block mb-1">You receive</label>
+                <div class="flex justify-between items-center gap-3">
+                  <input id="swapReceive" type="text" value="4815.50" readonly class="bg-transparent border-none text-[26px] font-semibold w-1/2 outline-none tabular-nums" />
+                  <button class="token-btn token-btn--primary">
+                    <span class="h-6 w-6 rounded-full bg-white text-ink text-[10px] font-bold grid place-items-center">U</span>
+                    <span>USDC</span><span class="material-symbols-outlined text-[16px]">expand_more</span>
+                  </button>
+                </div>
+                <div id="swapReceiveEur" class="text-[12px] text-ink2 mt-1 tabular-nums">€ 4.815,50 (−0.12%)</div>
+              </div>
+
+              <button class="btn-primary w-full mt-5">Confirm swap</button>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+    </div>
+
+    <footer class="max-w-3xl mx-auto px-4 sm:px-6 mt-16">
+      <div class="flex flex-col sm:flex-row items-center justify-between gap-2 border-t border-line pt-5 pb-2 text-[12px] text-muted">
+        <span>CryptoBridge Desktop — prototype on a mock backend. No real money moves.</span>
+        <a href="https://github.com/bhanneke/cryptobridge-desktop" class="inline-flex items-center gap-1 hover:text-ink2 transition" target="_blank" rel="noopener">
+          <span class="material-symbols-outlined text-[14px]">code</span> Source on GitHub
+        </a>
+      </div>
+    </footer>
+  </main>
+
+  <!-- Art purchase modal -->
+  <div id="artModal" class="modal" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="modal-card">
+      <button class="modal-close" data-close aria-label="Close">
+        <span class="material-symbols-outlined text-[20px]">close</span>
+      </button>
+      <div id="artModalBody"></div>
+    </div>
+  </div>
+
+  <!-- Yield invest modal -->
+  <div id="investModal" class="modal" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="modal-card">
+      <button class="modal-close" data-close aria-label="Close">
+        <span class="material-symbols-outlined text-[20px]">close</span>
+      </button>
+      <div id="investModalBody"></div>
+    </div>
+  </div>
+
+  <!-- Bridge success overlay -->
+  <div id="bridgeSuccess" class="bridge-success" role="status" aria-live="polite" aria-hidden="true">
+    <div class="bridge-success-card">
+      <div class="success-ring" aria-hidden="true"></div>
+      <div class="success-check">
+        <span class="material-symbols-outlined text-[40px]">check</span>
+      </div>
+      <p class="text-[18px] font-semibold mt-5">Bridge complete</p>
+      <p class="text-[14px] text-ink2 mt-1"><span id="successAmount" class="font-semibold text-ink tabular-nums">€ 0,00</span> is now self-custodied</p>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

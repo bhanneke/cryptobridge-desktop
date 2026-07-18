@@ -1,0 +1,32 @@
+/* Tailwind v4 build input. The prototype used the Tailwind CDN with an inline
+   config; the desktop app ships a compiled, static src/tailwind.css instead
+   (bright line: no CDN assets in the product). Rebuild with `npm run build:css`
+   after adding new utility classes. */
+
+@import "tailwindcss";
+
+@source "../src";
+
+@theme {
+  --color-bg:      #F7F8FA;
+  --color-surface: #FFFFFF;
+  --color-ink:     #0B1220;
+  --color-ink2:    #5B6478;
+  --color-muted:   #9AA3B2;
+  --color-line:    #E6E8EE;
+  --color-indigo:  #6366F1;
+  --color-violet:  #8B5CF6;
+  --color-mint:    #34D399;
+  --color-dark:    #0B0E14;
+  --color-dark2:   #151B2A;
+  --color-dark3:   #2A3143;
+
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --shadow-card: 0 1px 2px rgba(11, 18, 32, 0.04), 0 8px 24px rgba(11, 18, 32, 0.04);
+  --shadow-lift: 0 4px 6px rgba(11, 18, 32, 0.05), 0 12px 32px rgba(11, 18, 32, 0.06);
+  --shadow-ring: 0 0 0 3px rgba(99, 102, 241, 0.30);
+
+  --radius-xl2: 12px;
+}

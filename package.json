@@ -1,0 +1,26 @@
+{
+  "name": "cryptobridge-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Non-custodial desktop companion for P2P bitcoin on-ramps — Tauri shell around the CryptoBridge UI with a pluggable OnrampAdapter (mock backend included).",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bhanneke/cryptobridge-desktop.git"
+  },
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri",
+    "build:css": "tailwindcss -i build/tailwind.input.css -o src/tailwind.css --minify",
+    "test": "node --test tests/*.test.js",
+    "test:e2e": "node tests/e2e.js"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.1.0",
+    "@tauri-apps/cli": "^2.5.0",
+    "playwright-core": "^1.50.0",
+    "tailwindcss": "^4.1.0"
+  }
+}
