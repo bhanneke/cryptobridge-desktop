@@ -108,13 +108,16 @@ and scheduled to be replaced by the real offer-book and payment screens.
 
 ## Roadmap
 
-1. **Bisq regtest spike** *(next, independent of this repo)* — script one full BTC/EUR trade
-   against a local Bisq daemon's gRPC API; decide Bisq 1 vs Bisq 2/Easy from evidence.
-2. **BisqAdapter** — same interface, daemon supervision in the Rust shell, Tor bundled.
+1. ~~**Bisq trade spike**~~ **Done (2026-07-19)** — a full Bisq Easy BTC/EUR SEPA trade ran end to
+   end over Bisq 2's REST + WebSocket API, headless, no bitcoind/Tor. Decision: **build the
+   BisqAdapter on Bisq 2**. Evidence and API gotchas: [docs/BISQ2_SPIKE_FINDINGS.md](docs/BISQ2_SPIKE_FINDINGS.md),
+   reproducible setup in [spike/bisq2](spike/bisq2).
+2. **BisqAdapter** — implement `OnrampAdapter` against the Bisq 2 API (mapping table in the
+   findings doc); contract tests mirroring the mock tests against the spike environment.
 3. **Payment screen** — surface `getPaymentInstructions` as IBAN + GiroCode QR with
    Verification-of-Payee guidance, replacing the demo's instant-pay shortcut.
 4. **Replace demo fiction** — offer book instead of bank picker; drop yield/art or move them
-   behind a "demo" flag.
+   behind a "demo" flag. Then: pairing auth, Tor + node supervision in the Rust shell.
 
 Details, threat model and the regulatory analysis live in the
 [implementation plan](https://github.com/bhanneke/crypto-onramp/blob/main/docs/IMPLEMENTATION_PLAN.md).
