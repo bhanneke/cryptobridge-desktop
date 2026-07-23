@@ -112,10 +112,17 @@ and scheduled to be replaced by the real offer-book and payment screens.
    end over Bisq 2's REST + WebSocket API, headless, no bitcoind/Tor. Decision: **build the
    BisqAdapter on Bisq 2**. Evidence and API gotchas: [docs/BISQ2_SPIKE_FINDINGS.md](docs/BISQ2_SPIKE_FINDINGS.md),
    reproducible setup in [spike/bisq2](spike/bisq2).
-2. **BisqAdapter** — implement `OnrampAdapter` against the Bisq 2 API (mapping table in the
-   findings doc); contract tests mirroring the mock tests against the spike environment.
+2. ~~**BisqAdapter**~~ **Done (2026-07-23), live-verified** — `OnrampAdapter` implemented against
+   the Bisq 2 REST + WebSocket API ([`src/adapters/bisq-adapter.js`](src/adapters/bisq-adapter.js)),
+   in **external-wallet mode** (the user brings a receive address; we hold no keys — see
+   [`src/adapters/wallet.js`](src/adapters/wallet.js)). A full buyer-side trade drove
+   `OFFER_TAKEN → … → COMPLETE` through the adapter against a live local network
+   ([`tests/bisq-adapter.contract.js`](tests/bisq-adapter.contract.js)); pure logic is unit-tested
+   in CI ([`tests/bisq-adapter.test.js`](tests/bisq-adapter.test.js)). Select it with
+   `?backend=bisq&node=…&addr=…`. Remaining before release: pairing auth + the payment screen (below).
 3. **Payment screen** — surface `getPaymentInstructions` as IBAN + GiroCode QR with
-   Verification-of-Payee guidance, replacing the demo's instant-pay shortcut.
+   Verification-of-Payee guidance, replacing the demo's instant-pay shortcut. Also: a manual
+   "I received the bitcoin" confirmation (external-wallet mode does not auto-assert receipt).
 4. **Replace demo fiction** — offer book instead of bank picker; drop yield/art or move them
    behind a "demo" flag. Then: pairing auth, Tor + node supervision in the Rust shell.
 

@@ -6,6 +6,37 @@ spike — see [BISQ2_SPIKE_FINDINGS.md](BISQ2_SPIKE_FINDINGS.md) for the proof r
 decision. The skeleton to fill in is [`src/adapters/bisq-adapter.js`](../src/adapters/bisq-adapter.js);
 the contract-test stub is [`tests/bisq-adapter.contract.js`](../tests/bisq-adapter.contract.js).*
 
+## Status: IMPLEMENTED & live-verified (2026-07-23)
+
+This brief is now built. `src/adapters/bisq-adapter.js` implements the full buyer side; a live
+contract test drove `OFFER_TAKEN → AWAITING_FIAT_PAYMENT → FIAT_SENT → FIAT_RECEIVED →
+BTC_RELEASED → COMPLETE` through the adapter against a real local Bisq 2 network. Wallet decision:
+**external-wallet mode** (`src/adapters/wallet.js`, `ExternalWallet`) — the user brings a receive
+address, we hold no keys. Notes from the build:
+
+- **WS frames are deltas.** Each `TRADE_PROPERTIES` frame carries *one* changed property
+  (`tradeState`, or `paymentAccountData`, or `bitcoinPaymentData`, …) keyed by tradeId. The adapter
+  **accumulates** them per trade (`tradeProps`). `getPaymentInstructions` reads the seller's
+  `paymentAccountData` off this stream — there is no REST call for it.
+- **Seller account data is free text** (e.g. `"Alice Spike, IBAN DE.. (SEPA)"`). `epc.js`
+  `parseSepaAccountData()` extracts IBAN/holder/BIC and always returns the raw string so the UI can
+  show exactly what the seller sent.
+- **BTC address is sent event-driven, not blindly.** The buyer's receive address is fixed at
+  `takeOffer` time and PATCHed as `BUYER_SEND_BITCOIN_PAYMENT_DATA` only once the WS stream reports
+  `TAKER_RECEIVED_TAKE_OFFER_RESPONSE` (the phase where it is legal).
+- **BTC receipt is NOT auto-asserted.** `autoConfirmBtcReceipt` defaults to **false**: a trade parks
+  at `BTC_RELEASED` until the user verifies the coins in their own wallet and calls
+  `confirmBtcReceived()` (a bisq-only method; the mock auto-completes). The contract test flips the
+  flag to run unattended. The payment-screen milestone must add that manual confirm step.
+- **Address safety.** `wallet.js` fully checksums bech32/bech32m receive addresses (BIP173/350) to
+  catch paste typos before real BTC is sent; legacy base58 gets a structural check.
+- **Two integration gaps remain (documented, not yet built):** (1) *pairing auth* — `_req` refuses
+  when a `pairingCode` is set (the spike ran unauthenticated on loopback; production needs Bisq's
+  pairing flow). (2) *CSP/transport* — talking to the node from the Tauri build needs the node's
+  origin added to the CSP in `src-tauri/tauri.conf.json`, or (cleaner) routing HTTP/WS through the
+  Rust shell over IPC so `connect-src` stays `'self'`. The plain-browser dev server has no CSP, so
+  `?backend=bisq` works there today.
+
 ## Goal
 
 Implement `OnrampAdapter` (the frozen interface in `src/adapters/onramp-adapter.js`) against a

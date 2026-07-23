@@ -6,6 +6,7 @@
    for the fiat leg, and a sats-denominated wallet. No network access. */
 
 import { OnrampAdapter, TradeState } from './onramp-adapter.js';
+import { epcPayload } from './epc.js';
 
 const RATE_EUR_PER_BTC = 91420.0; // demo constant — a real adapter streams this
 
@@ -23,22 +24,8 @@ const SELLER = { name: 'CryptoBridge Demo Seller', iban: 'DE02 1203 0000 0000 20
 
 const eurToSats = (eur) => Math.round((eur / RATE_EUR_PER_BTC) * 1e8);
 
-/* EPC069-12 (version 002) "BCD" payload — what German banking apps scan as
-   GiroCode. Line order: service tag, version, charset, identification, BIC,
-   receiver name, IBAN, amount, purpose code, structured reference,
-   unstructured remittance, beneficiary-to-originator info. */
-function epcPayload({ receiverName, iban, amountEur, reference }) {
-  return [
-    'BCD', '002', '1', 'SCT',
-    '',                                   // BIC — optional since v2
-    receiverName,
-    iban.replace(/\s+/g, ''),
-    'EUR' + amountEur.toFixed(2),
-    '', '',                               // purpose, structured reference
-    reference,
-    '',
-  ].join('\n');
-}
+/* The EPC069-12 (GiroCode) payload builder lives in ./epc.js so this mock and
+   the BisqAdapter render the identical IBAN + QR from one code path. */
 
 export class MockAdapter extends OnrampAdapter {
   /** @param {{latencyScale?: number}} [opts] latencyScale scales all simulated
