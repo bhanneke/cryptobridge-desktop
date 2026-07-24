@@ -154,6 +154,36 @@ IBAN + QR generation identical across adapters.
   trade through the adapter and assert the mapped `TradeState` sequence. CI can build the bisq2
   headless apps with JDK 21 (no bitcoind/Tor) — see `spike/bisq2/README.md`.
 
+## Transport: how the adapter actually reaches the node (2026-07-24)
+
+The adapter no longer calls `fetch`/`WebSocket` itself — it goes through a transport seam
+(`src/adapters/transport.js`), because inside the packaged app it *cannot*: the CSP holds
+`connect-src` at `'self'`, so a webview socket to `127.0.0.1:8090` is blocked outright. This was
+a hard blocker; before it, the Bisq backend only worked when `src/` was served in a browser.
+
+Two implementations behind one interface — `request()` and `openSocket()`:
+
+- **WebTransport** — `fetch` + `WebSocket`. Browser dev server, the Node contract test.
+- **TauriTransport** — `invoke('bisq_http' | 'bisq_ws_open' | 'bisq_ws_send' | 'bisq_ws_close')`
+  plus a single `bisq-ws` event stream carrying every frame tagged with its socket id.
+
+The CSP was **not** widened; the shell owns the socket instead. All policy lives in
+`src-tauri/src/proxy.rs` (audit there, not in the JS): plaintext `http:`/`ws:` only, **literal
+loopback IPs only** — hostnames including `localhost` are refused so the proxy never resolves a
+name and DNS rebinding cannot walk it off-machine — paths confined to `/api/v1/…` and
+`/websocket`, no redirect following, no environment proxy, method allowlist, size caps, socket
+cap. Crucially there is **no TLS backend compiled in** (`default-features = false`), so the proxy
+cannot open an HTTPS connection at all; CI greps the dependency tree and fails if one appears.
+
+Residual risk, stated rather than hidden: any *port* on loopback is reachable, since a user may
+run their node anywhere. The path allowlist is what keeps that uninteresting.
+
+Verified: 8 allowlist unit tests + 6 live-transport tests (real servers on 127.0.0.1, including
+proof a 302 is returned rather than followed), 16 JS transport tests including the
+frame-before-id race, and both a live `live_bisq` proxy probe and the full buyer-side contract
+trade against a real Bisq node. Not yet exercised: the literal Tauri IPC bridge in a running
+window — that needs a GUI session plus a node, and is Tauri's own code either side of the seam.
+
 ## Auth / production posture (not needed for local dev, required before release)
 
 The spike disabled `authorizationRequired` on loopback. Production talks to the **user's own node**
