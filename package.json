@@ -15,7 +15,8 @@
     "tauri": "tauri",
     "build:css": "tailwindcss -i build/tailwind.input.css -o src/tailwind.css --minify",
     "test": "node --test tests/*.test.js",
-    "test:e2e": "node tests/e2e.js"
+    "test:e2e": "node tests/e2e.js",
+    "build:icons": "bash build/build-icons.sh"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.1.0",
