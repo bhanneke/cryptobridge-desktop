@@ -135,6 +135,10 @@ const ibanTxt = await page.textContent('#payIban');
 ok(/\d{4}/.test(ibanTxt), `payment screen shows the seller IBAN: "${ibanTxt.trim()}"`);
 const payAmt = await page.textContent('#payAmount');
 ok(payAmt.includes('500'), `payment screen shows the amount we chose: "${payAmt.trim()}"`);
+// The seller's bank details are free text they typed; showing the source is
+// what lets a user notice one who is playing games with it.
+const payRaw = await page.textContent('#payRaw');
+ok(payRaw.includes('DE02'), `payment screen discloses the seller's raw message: "${payRaw.trim()}"`);
 await page.screenshot({ path: join(shots, 'payment.png') });
 await page.click('#payConfirmSent');
 ok(true, 'user confirms the SEPA transfer sent');

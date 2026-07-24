@@ -16,7 +16,7 @@
 pub mod proxy;
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use futures_util::{SinkExt, StreamExt};
@@ -39,6 +39,9 @@ pub struct Net {
     client: reqwest::Client,
     sockets: Mutex<HashMap<u32, mpsc::UnboundedSender<SockCmd>>>,
     next_id: AtomicU32,
+    /// Slots reserved for sockets that are open *or* mid-handshake. Counting
+    /// the map instead would not bound anything — see `bisq_ws_open`.
+    reserved: AtomicUsize,
 }
 
 impl Net {
@@ -47,6 +50,7 @@ impl Net {
             client: proxy::build_client(),
             sockets: Mutex::new(HashMap::new()),
             next_id: AtomicU32::new(1),
+            reserved: AtomicUsize::new(0),
         }
     }
 }
@@ -85,14 +89,24 @@ async fn bisq_http(
 /// the caller cannot miss frames: nothing is emitted before it has the id.
 #[tauri::command]
 async fn bisq_ws_open(app: AppHandle, state: State<'_, Net>, url: String) -> Result<u32, String> {
-    {
-        let socks = state.sockets.lock().map_err(|_| "socket registry poisoned")?;
-        if socks.len() >= proxy::MAX_SOCKETS {
-            return Err(format!("too many open sockets ({} max)", proxy::MAX_SOCKETS));
-        }
-    }
+    // SECURITY (audit finding 5): reserve the slot *before* the handshake.
+    // Checking the map here and inserting after the await leaves a window in
+    // which any number of concurrent calls all pass the check, so the cap
+    // bounded nothing. Reserve atomically, and release on every exit path.
+    state
+        .reserved
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+            if n >= proxy::MAX_SOCKETS { None } else { Some(n + 1) }
+        })
+        .map_err(|_| format!("too many open sockets ({} max)", proxy::MAX_SOCKETS))?;
 
-    let stream = proxy::ws_connect(&url).await?;
+    let stream = match proxy::ws_connect(&url).await {
+        Ok(s) => s,
+        Err(e) => {
+            state.reserved.fetch_sub(1, Ordering::SeqCst);
+            return Err(e);
+        }
+    };
 
     let id = state.next_id.fetch_add(1, Ordering::Relaxed);
     let (tx, rx) = mpsc::unbounded_channel();
@@ -173,6 +187,7 @@ async fn pump(app: AppHandle, id: u32, stream: proxy::BisqWs, mut rx: mpsc::Unbo
         if let Ok(mut socks) = net.sockets.lock() {
             socks.remove(&id);
         }
+        net.reserved.fetch_sub(1, Ordering::SeqCst);   // release the reservation
     }
     emit_ws(&app, id, "close", None);
 }

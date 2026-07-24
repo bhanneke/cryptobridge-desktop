@@ -113,6 +113,20 @@ binary, not the flag. The e2e suite fails if any of it comes back. The demo stil
 [prototype repo](https://github.com/bhanneke/crypto-onramp) and on GitHub Pages, which is where
 a demo belongs.
 
+## Security
+
+The app has been through a full adversarial review — see
+[docs/SECURITY_AUDIT.md](docs/SECURITY_AUDIT.md) for the threat model, the five findings and
+what was done about them. The short version of the threat model: there is no server to attack,
+so the attackers that matter are **the person on the other side of the trade** and **the node
+you point this at**. Both supply text that ends up in a payment instruction.
+
+Findings carry regression tests in [`tests/security.test.js`](tests/security.test.js), written
+from the attacker's side. If one of those ever fails again, someone's money is at stake.
+
+Found something? Open an issue — or, for anything exploitable, contact the maintainer directly
+rather than filing publicly.
+
 ## Project structure
 
 ```
@@ -175,8 +189,13 @@ a demo belongs.
    for the wrong chain. The art / yield / swap endgame is **deleted**, not flag-gated — see the
    bright-line note above. Offer text comes from a P2P network, so it enters the DOM as
    `textContent`, never as markup.
-6. **Before release** — pairing auth, node supervision and Tor in the Rust shell, reproducible
-   builds, no-US distribution, and a full adversarial security audit.
+6. ~~**Security audit**~~ **Done (2026-07-25)** — first full adversarial review, against a threat
+   model of a **hostile seller and a lying node** rather than a network eavesdropper.
+   Five findings, all fixed, each with a regression test that fails against the old code:
+   the worst let a seller inject newlines into their bank details so the **GiroCode paid a
+   different account than the screen displayed**. Report: [docs/SECURITY_AUDIT.md](docs/SECURITY_AUDIT.md).
+7. **Before release** — pairing auth, node supervision and Tor in the Rust shell, reproducible
+   builds, and no-US distribution.
 
 Details, threat model and the regulatory analysis live in the
 [implementation plan](https://github.com/bhanneke/crypto-onramp/blob/main/docs/IMPLEMENTATION_PLAN.md).
