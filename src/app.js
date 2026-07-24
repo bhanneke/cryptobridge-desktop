@@ -9,6 +9,7 @@ import { TradeState } from './adapters/onramp-adapter.js';
 import { MockAdapter } from './adapters/mock-adapter.js';
 import { BisqAdapter } from './adapters/bisq-adapter.js';
 import { ExternalWallet } from './adapters/wallet.js';
+import { qrSvg } from './vendor/qr.js';
 
 // ---------------------------------------------------------------
 // Backend adapter — mock by default; opt into a real Bisq 2 node with
@@ -438,12 +439,95 @@ function startParticleAnimation() {
 // ---------------------------------------------------------------
 const TRADE_LABELS = {
   [TradeState.OFFER_TAKEN]:           'Offer taken…',
-  [TradeState.AWAITING_FIAT_PAYMENT]: 'Sending SEPA payment…',
+  [TradeState.AWAITING_FIAT_PAYMENT]: 'Awaiting your SEPA payment…',
   [TradeState.FIAT_SENT]:             'Waiting for the seller…',
   [TradeState.FIAT_RECEIVED]:         'Payment confirmed…',
   [TradeState.BTC_RELEASED]:          'Releasing bitcoin…',
 };
 const CONFIRM_LABEL = 'Confirm bridge <span class="material-symbols-outlined text-[18px]">arrow_forward</span>';
+
+// --- Payment screen (the fiat leg) --------------------------------------
+const formatIban = (iban) => (iban || '').replace(/\s+/g, '').replace(/(.{4})/g, '$1 ').trim();
+
+function paymentPhase(name, waitMsg) {
+  $('#payPhasePay').hidden     = name !== 'pay';
+  $('#payPhaseWait').hidden    = name !== 'wait';
+  $('#payPhaseReceive').hidden = name !== 'receive';
+  if (name === 'wait' && waitMsg) $('#payWaitMsg').textContent = waitMsg;
+}
+function showPayment() {
+  const o = $('#paymentOverlay');
+  o.classList.add('show');
+  o.setAttribute('aria-hidden', 'false');
+}
+function hidePayment() {
+  const o = $('#paymentOverlay');
+  o.classList.remove('show');
+  o.setAttribute('aria-hidden', 'true');
+}
+
+/** Show the IBAN + GiroCode and resolve once the user confirms they paid
+ *  (which marks the SEPA transfer sent on the backend). */
+function presentPayment(tradeId, instr, amountEur) {
+  $('#payAmount').textContent = fmtEUR(amountEur);
+  $('#payName').textContent   = instr.receiverName || '—';
+  $('#payIban').textContent   = formatIban(instr.iban);
+  const bicRow = $('#payBicRow');
+  if (instr.bic) { $('#payBic').textContent = instr.bic; bicRow.hidden = false; } else bicRow.hidden = true;
+  const refRow = $('#payRefRow');
+  if (instr.reference) { $('#payRef').textContent = instr.reference; refRow.hidden = false; } else refRow.hidden = true;
+  // GiroCode from the adapter's EPC069-12 payload — verified self-contained SVG.
+  $('#payQr').innerHTML = instr.epcQrPayload ? qrSvg(instr.epcQrPayload, { size: 220 }) : '';
+
+  paymentPhase('pay');
+  showPayment();
+
+  return new Promise((resolve, reject) => {
+    const btn = $('#payConfirmSent');
+    const onClick = async () => {
+      btn.removeEventListener('click', onClick);
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Confirming…';
+      try {
+        await adapter.confirmFiatSent(tradeId);
+        paymentPhase('wait', 'Waiting for the seller to confirm receipt…');
+        resolve();
+      } catch (e) {
+        reject(e);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "I've sent the SEPA transfer";
+      }
+    };
+    btn.addEventListener('click', onClick);
+  });
+}
+
+/** For non-custodial backends the trade parks after release until the user
+ *  confirms the bitcoin arrived in their own wallet. */
+async function presentReceive(tradeId) {
+  const addr = await adapter.getReceiveAddress().catch(() => null);
+  if (addr) $('#payAddr').textContent = addr;
+  paymentPhase('receive');
+  return new Promise((resolve, reject) => {
+    const btn = $('#payConfirmReceived');
+    const onClick = async () => {
+      btn.removeEventListener('click', onClick);
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Confirming…';
+      try {
+        await adapter.confirmBtcReceived(tradeId);
+        resolve();
+      } catch (e) {
+        reject(e);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'I received the bitcoin';
+      }
+    };
+    btn.addEventListener('click', onClick);
+  });
+}
 
 async function runBridgeTrade(fiatAmountEur) {
   const offers = await adapter.listOffers({ fiat: 'EUR', direction: 'buy' });
@@ -453,20 +537,36 @@ async function runBridgeTrade(fiatAmountEur) {
   const trade = await adapter.takeOffer(offer.id, { fiatAmountEur });
 
   const btn = $('#confirmBridgeBtn');
+  let shownPayment = false;
   await new Promise((resolve, reject) => {
-    const unsub = adapter.subscribeTrade(trade.id, (tradeState) => {
+    const unsub = adapter.subscribeTrade(trade.id, async (tradeState) => {
       if (TRADE_LABELS[tradeState]) {
         btn.innerHTML = `<span class="spinner"></span> ${TRADE_LABELS[tradeState]}`;
       }
-      if (tradeState === TradeState.AWAITING_FIAT_PAYMENT) {
-        // Demo shortcut: pay the fiat leg instantly instead of showing
-        // the payment screen. The instructions endpoint stays exercised.
-        adapter.getPaymentInstructions(trade.id)
-          .then(() => adapter.confirmFiatSent(trade.id))
-          .catch(reject);
+      try {
+        // Pause at the fiat leg: show the real IBAN + GiroCode and wait for the
+        // user to make the SEPA transfer from their own bank.
+        if (tradeState === TradeState.AWAITING_FIAT_PAYMENT && !shownPayment) {
+          shownPayment = true;
+          const instr = await adapter.getPaymentInstructions(trade.id);
+          await presentPayment(trade.id, instr, fiatAmountEur);
+        }
+        if (tradeState === TradeState.FIAT_RECEIVED) {
+          paymentPhase('wait', 'Seller confirmed the payment — releasing your bitcoin…');
+        }
+        if (tradeState === TradeState.BTC_RELEASED) {
+          // Non-custodial backends (BisqAdapter) don't auto-assert receipt.
+          if (typeof adapter.confirmBtcReceived === 'function' && adapter.autoConfirmBtcReceipt !== true) {
+            await presentReceive(trade.id);
+          } else {
+            paymentPhase('wait', 'Finalising the trade…');
+          }
+        }
+        if (tradeState === TradeState.COMPLETE) { hidePayment(); unsub(); resolve(); }
+        if (tradeState === TradeState.FAILED)   { hidePayment(); unsub(); reject(new Error('trade failed')); }
+      } catch (e) {
+        hidePayment(); unsub(); reject(e);
       }
-      if (tradeState === TradeState.COMPLETE) { unsub(); resolve(); }
-      if (tradeState === TradeState.FAILED)   { unsub(); reject(new Error('trade failed')); }
     });
   });
 }

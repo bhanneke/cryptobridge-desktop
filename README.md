@@ -120,9 +120,12 @@ and scheduled to be replaced by the real offer-book and payment screens.
    ([`tests/bisq-adapter.contract.js`](tests/bisq-adapter.contract.js)); pure logic is unit-tested
    in CI ([`tests/bisq-adapter.test.js`](tests/bisq-adapter.test.js)). Select it with
    `?backend=bisq&node=…&addr=…`. Remaining before release: pairing auth + the payment screen (below).
-3. **Payment screen** — surface `getPaymentInstructions` as IBAN + GiroCode QR with
-   Verification-of-Payee guidance, replacing the demo's instant-pay shortcut. Also: a manual
-   "I received the bitcoin" confirmation (external-wallet mode does not auto-assert receipt).
+3. ~~**Payment screen**~~ **Done (2026-07-24)** — the trade now pauses at the fiat leg and shows a
+   real payment screen: seller IBAN + a **scannable EPC069-12 GiroCode QR** (dependency-free encoder
+   in [`src/vendor/qr.js`](src/vendor/qr.js), verified by decoding every output with OpenCV),
+   Verification-of-Payee guidance, an honest "reputation, not multisig" trust note, and a manual
+   **"I received the bitcoin"** step for non-custodial backends (external-wallet mode never
+   auto-asserts receipt). Replaces the demo's instant-pay shortcut.
 4. **Replace demo fiction** — offer book instead of bank picker; drop yield/art or move them
    behind a "demo" flag. Then: pairing auth, Tor + node supervision in the Rust shell.
 
