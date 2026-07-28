@@ -23,6 +23,9 @@
 import { OnrampAdapter, TradeState } from './onramp-adapter.js';
 import { epcPayload, parseSepaAccountData } from './epc.js';
 import { pickTransport } from './transport.js';
+import {
+  parsePairingInput, isPairingExpired, missingPermissions, PAIRING_CODE_VERSION,
+} from './pairing.js';
 
 /** Bisq `tradeState` (compound names — match by substring) → our TradeState.
  *  Verified against the buyer-side sequence captured in the spike. */
@@ -49,6 +52,10 @@ export function mapBisqState(raw) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** Statuses that may mean "your session is no longer good". See the note in
+ *  _req: a real node answers 403 for both an absent and an expired session. */
+const AUTH_FAILURE_STATUS = new Set([401, 403]);
+
 export class BisqAdapter extends OnrampAdapter {
   /**
    * @param {Object} opts
@@ -58,7 +65,13 @@ export class BisqAdapter extends OnrampAdapter {
    * @param {string} [opts.network='mainnet']  chain the node runs on (display + address checks)
    * @param {string} [opts.nickName='cryptobridge']  identity nickname if one must be created
    * @param {boolean} [opts.autoConfirmBtcReceipt=false]  auto-send BTC_CONFIRMED+CLOSE_TRADE on release (tests/demo only)
-   * @param {string} [opts.pairingCode]  present → authenticated remote-node mode (see auth note; not yet implemented)
+   * @param {string} [opts.pairingCode]  a Bisq pairing QR payload or code id — required the
+   *        first time you connect to a node with authorizationRequired=true
+   * @param {{clientId:string, clientSecret:string}} [opts.credentials]  previously paired
+   *        credentials, so a returning user does not have to pair again
+   * @param {string} [opts.clientName='CryptoBridge Desktop']  shown in the node's client list
+   * @param {(c:{clientId:string,clientSecret:string})=>any} [opts.onCredentials]  called once
+   *        after pairing so the host can persist them; this class never stores them itself
    * @param {import('./transport.js').WebTransport} [opts.transport]  I/O seam; defaults to
    *        Tauri IPC inside the app and fetch/WebSocket elsewhere (see transport.js)
    */
@@ -70,6 +83,9 @@ export class BisqAdapter extends OnrampAdapter {
     nickName = 'cryptobridge',
     autoConfirmBtcReceipt = false,
     pairingCode,
+    credentials,
+    clientName = 'CryptoBridge Desktop',
+    onCredentials,
     transport,
   } = {}) {
     super();
@@ -82,6 +98,11 @@ export class BisqAdapter extends OnrampAdapter {
     this.nickName = nickName;
     this.autoConfirmBtcReceipt = autoConfirmBtcReceipt;
     this.pairingCode = pairingCode;
+    this.clientName = clientName;
+    this.onCredentials = onCredentials;
+    this.credentials = credentials ?? null;   // {clientId, clientSecret} — durable
+    this.sessionId = null;                    // short-lived, never persisted
+    this.sessionExpiry = null;
 
     this.ws = null;
     this.closing = false;
@@ -102,22 +123,39 @@ export class BisqAdapter extends OnrampAdapter {
   }
 
   // --- REST helper -----------------------------------------------------------
+  /** Headers that authenticate a request, or undefined on an open node. */
+  _authHeaders() {
+    if (!this.credentials?.clientId || !this.sessionId) return undefined;
+    return {
+      'Bisq-Client-Id': this.credentials.clientId,
+      'Bisq-Session-Id': this.sessionId,
+    };
+  }
+
   /** @returns {Promise<{status:number, data:any}>} throws on HTTP >= 300 */
-  async _req(method, path, body) {
-    if (this.pairingCode) {
-      // Production talks to the user's own node behind Bisq's pairing flow
-      // (QR / 5-min code → clientId/secret/session). The spike ran on an
-      // unauthenticated loopback node, so this path is unverified; refuse
-      // rather than send blind, unauthenticated-looking requests.
-      throw new Error('BisqAdapter: authenticated (pairing) mode is not implemented yet — run against a loopback dev node without authorizationRequired');
-    }
+  async _req(method, path, body, { retryOnAuthFailure = true } = {}) {
+    const send = () => this.transport.request(
+      method,
+      this.rest + path,
+      body !== undefined ? JSON.stringify(body) : undefined,
+      this._authHeaders(),
+    );
+
     let res;
     try {
-      res = await this.transport.request(
-        method,
-        this.rest + path,
-        body !== undefined ? JSON.stringify(body) : undefined,
-      );
+      res = await send();
+      // Sessions are deliberately short-lived. Renew once and retry rather than
+      // failing a call — and possibly a trade — on an expiry we can just fix.
+      //
+      // Both 401 and 403 count. Measured against a real node with
+      // authorizationRequired=true, an expired *and* an absent session both come
+      // back as 403, because authorization denies the call before authentication
+      // has marked it as anyone. Retrying only on 401 would mean never renewing
+      // at all. A genuine permission denial costs one wasted renewal, once.
+      if (AUTH_FAILURE_STATUS.has(res.status) && retryOnAuthFailure && this.credentials) {
+        await this._renewSession();
+        res = await send();
+      }
     } catch (e) {
       throw new Error(`Bisq node unreachable at ${this.rest} (${method} ${path}): ${e.message}`);
     }
@@ -132,6 +170,84 @@ export class BisqAdapter extends OnrampAdapter {
       throw err;
     }
     return { status: res.status, data };
+  }
+
+  // --- pairing / session -----------------------------------------------------
+
+  /** Exchange a pairing code for durable credentials plus a session.
+   *
+   *  The code is single-use and short-lived; the node regenerates one every few
+   *  minutes. `clientSecret` is what actually grants access from then on, so it
+   *  is handed to `onCredentials` for the host to store — this class keeps it
+   *  in memory only and never writes it anywhere.
+   *
+   *  @returns {Promise<{clientId:string, permissions:string[]|null, webSocketUrl:string|null}>} */
+  async pair() {
+    if (!this.pairingCode) throw new Error('BisqAdapter.pair(): no pairing code supplied');
+    const parsed = parsePairingInput(this.pairingCode);
+
+    if (isPairingExpired(parsed)) {
+      throw new Error('pairing code has expired — read a fresh one from your node and try again');
+    }
+    // Fail here rather than as a 403 halfway through a trade.
+    const missing = missingPermissions(parsed);
+    if (missing.length) {
+      throw new Error(`this pairing code does not grant ${missing.join(', ')} — pair again from a node that allows them`);
+    }
+
+    const res = await this._req('POST', '/access/pairing', {
+      version: PAIRING_CODE_VERSION,
+      pairingCodeId: parsed.pairingCodeId,
+      clientName: this.clientName,
+    }, { retryOnAuthFailure: false });
+
+    const d = res.data ?? {};
+    if (!d.clientId || !d.clientSecret || !d.sessionId) {
+      throw new Error(`pairing response missing credentials: ${JSON.stringify(d)}`);
+    }
+    this.credentials = { clientId: d.clientId, clientSecret: d.clientSecret };
+    this.sessionId = d.sessionId;
+    this.sessionExpiry = d.sessionExpiryDate ?? null;
+    // The code is now spent; drop it so a reconnect cannot try to reuse it.
+    this.pairingCode = null;
+
+    try { await this.onCredentials?.(this.credentials); }
+    catch (e) { console.error('storing Bisq credentials failed', e); }
+
+    return {
+      clientId: d.clientId,
+      permissions: parsed.permissions,
+      webSocketUrl: parsed.webSocketUrl,
+    };
+  }
+
+  /** Trade the durable credentials for a fresh short-lived session. */
+  async _renewSession() {
+    if (!this.credentials) throw new Error('no credentials to renew a session with — pair first');
+    const res = await this._req('POST', '/access/session', {
+      clientId: this.credentials.clientId,
+      clientSecret: this.credentials.clientSecret,
+    }, { retryOnAuthFailure: false });
+    const d = res.data ?? {};
+    if (!d.sessionId) throw new Error(`session renewal returned no sessionId: ${JSON.stringify(d)}`);
+    this.sessionId = d.sessionId;
+    this.sessionExpiry = d.expiresAt ?? null;
+  }
+
+  /** Prefer stored credentials; fall back to the pairing code if they are
+   *  stale (revoked node-side, or a rebuilt node). */
+  async _authenticate() {
+    if (this.credentials) {
+      try {
+        await this._renewSession();
+        return;
+      } catch (e) {
+        if (!this.pairingCode) throw e;
+        console.warn('stored Bisq credentials rejected, re-pairing:', e.message);
+        this.credentials = null;
+      }
+    }
+    if (this.pairingCode) await this.pair();
   }
 
   /** PATCH a trade event, retrying while the peer's message propagates between
@@ -154,6 +270,9 @@ export class BisqAdapter extends OnrampAdapter {
   // --- lifecycle -------------------------------------------------------------
   async init() {
     this._setStatus('connecting');
+    // Authenticate first if this node wants it: every call below, and the
+    // WebSocket handshake, need the session headers.
+    if (this.pairingCode || this.credentials) await this._authenticate();
     // Reachability + market rate in one call.
     await this._refreshRate();
     // Ensure a buyer identity exists (buyers need no reputation).
@@ -398,6 +517,10 @@ export class BisqAdapter extends OnrampAdapter {
     let sock;
     try {
       sock = await this.transport.openSocket(this.wsUrl, {
+        // Bisq authenticates the WebSocket on the *handshake headers* — there
+        // is no query-string fallback — so an authenticated node is only
+        // reachable through a transport that can set them (the Rust shell).
+        headers: this._authHeaders(),
         onMessage: (raw) => this._onWsFrame(raw),
         onError: () => this._setStatus('error'),
         onClose: () => {

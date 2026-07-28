@@ -29,13 +29,12 @@ address, we hold no keys. Notes from the build:
   `confirmBtcReceived()` (a bisq-only method; the mock auto-completes). The contract test flips the
   flag to run unattended. The payment-screen milestone must add that manual confirm step.
 - **Address safety.** `wallet.js` fully checksums bech32/bech32m receive addresses (BIP173/350) to
-  catch paste typos before real BTC is sent; legacy base58 gets a structural check.
-- **Two integration gaps remain (documented, not yet built):** (1) *pairing auth* — `_req` refuses
-  when a `pairingCode` is set (the spike ran unauthenticated on loopback; production needs Bisq's
-  pairing flow). (2) *CSP/transport* — talking to the node from the Tauri build needs the node's
-  origin added to the CSP in `src-tauri/tauri.conf.json`, or (cleaner) routing HTTP/WS through the
-  Rust shell over IPC so `connect-src` stays `'self'`. The plain-browser dev server has no CSP, so
-  `?backend=bisq` works there today.
+  catch paste typos before real BTC is sent. Legacy base58 originally got a structural check only;
+  the security audit replaced that with full base58check (finding 2).
+- **Both integration gaps that were open here are now closed.** *Transport*: HTTP/WS are routed
+  through the Rust shell over IPC, so `connect-src` stays `'self'`. *Pairing auth*: implemented and
+  live-verified against a node with `authorizationRequired=true` — see
+  [PAIRING_AUTH.md](PAIRING_AUTH.md).
 
 ## Goal
 
@@ -186,10 +185,9 @@ window — that needs a GUI session plus a node, and is Tauri's own code either 
 
 ## Auth / production posture (not needed for local dev, required before release)
 
-The spike disabled `authorizationRequired` on loopback. Production talks to the **user's own node**
-using Bisq's pairing flow (QR/pairing code, 5-min TTL → clientId/clientSecret/session) — the same
-model the Bisq mobile apps use. Add a pairing step to `init` gated behind a "remote/authenticated"
-config; keep loopback-dev unauthenticated for tests.
+**Done (2026-07-25).** The adapter pairs, holds credentials, renews sessions, and authenticates
+both REST and the WebSocket handshake. Full protocol, wire format and the two behaviours that had
+to be measured against a live node rather than assumed: [PAIRING_AUTH.md](PAIRING_AUTH.md).
 
 ## Bright-line check (keep true throughout)
 

@@ -105,10 +105,27 @@ test('BisqAdapter requires a wallet', () => {
   assert.throws(() => new BisqAdapter({}), /requires a wallet/);
 });
 
-test('authenticated (pairing) mode is refused until implemented', async () => {
+test('a malformed pairing code fails clearly instead of connecting unauthenticated', async () => {
+  // Pairing is implemented now (see docs/PAIRING_AUTH.md); what must never
+  // happen is silently carrying on without credentials.
   const wallet = new ExternalWallet({ address: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4', network: 'mainnet' });
   const a = new BisqAdapter({ wallet, pairingCode: 'ABC-123' });
-  await assert.rejects(() => a.init(), /pairing.*not implemented/i);
+  await assert.rejects(() => a.init(), /pairing|base64url|version/i);
+});
+
+test('no session means no auth headers — we never send half-credentials', () => {
+  const wallet = new ExternalWallet({ address: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4', network: 'mainnet' });
+  const open = new BisqAdapter({ wallet });
+  assert.equal(open._authHeaders(), undefined, 'an open node gets no headers');
+
+  const paired = new BisqAdapter({ wallet, credentials: { clientId: 'cid', clientSecret: 's' } });
+  assert.equal(paired._authHeaders(), undefined, 'credentials without a session are not enough');
+
+  paired.sessionId = 'sid';
+  assert.deepEqual(paired._authHeaders(), {
+    'Bisq-Client-Id': 'cid',
+    'Bisq-Session-Id': 'sid',
+  });
 });
 
 test('listOffers returns [] for non-EUR fiat without touching the network', async () => {
