@@ -81,14 +81,20 @@ async fn bisq_http(
     method: String,
     url: String,
     body: Option<String>,
+    headers: Option<HashMap<String, String>>,
 ) -> Result<proxy::HttpResponse, String> {
-    proxy::http_request(&state.client, &method, &url, body).await
+    proxy::http_request(&state.client, &method, &url, body, headers.as_ref()).await
 }
 
 /// Opens a WebSocket and returns its id. Resolving *after* the handshake means
 /// the caller cannot miss frames: nothing is emitted before it has the id.
 #[tauri::command]
-async fn bisq_ws_open(app: AppHandle, state: State<'_, Net>, url: String) -> Result<u32, String> {
+async fn bisq_ws_open(
+    app: AppHandle,
+    state: State<'_, Net>,
+    url: String,
+    headers: Option<HashMap<String, String>>,
+) -> Result<u32, String> {
     // SECURITY (audit finding 5): reserve the slot *before* the handshake.
     // Checking the map here and inserting after the await leaves a window in
     // which any number of concurrent calls all pass the check, so the cap
@@ -100,7 +106,7 @@ async fn bisq_ws_open(app: AppHandle, state: State<'_, Net>, url: String) -> Res
         })
         .map_err(|_| format!("too many open sockets ({} max)", proxy::MAX_SOCKETS))?;
 
-    let stream = match proxy::ws_connect(&url).await {
+    let stream = match proxy::ws_connect(&url, headers.as_ref()).await {
         Ok(s) => s,
         Err(e) => {
             state.reserved.fetch_sub(1, Ordering::SeqCst);

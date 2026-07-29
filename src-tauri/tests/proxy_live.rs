@@ -72,6 +72,7 @@ async fn carries_a_real_http_request_and_response() {
         "POST",
         &format!("http://127.0.0.1:{port}/api/v1/trades"),
         Some(r#"{"offerId":"x"}"#.to_string()),
+        None,
     )
     .await
     .expect("request should succeed");
@@ -98,8 +99,7 @@ async fn hands_back_error_statuses_instead_of_throwing() {
         &client,
         "GET",
         &format!("http://127.0.0.1:{port}/api/v1/trades/nope"),
-        None,
-    )
+        None, None)
     .await
     .expect("a 404 is a response, not a transport failure");
 
@@ -121,8 +121,7 @@ async fn does_not_follow_redirects_off_loopback() {
         &client,
         "GET",
         &format!("http://127.0.0.1:{port}/api/v1/market-price/quotes"),
-        None,
-    )
+        None, None)
     .await
     .expect("the redirect should be returned, not followed");
 
@@ -136,7 +135,7 @@ async fn guards_fire_on_the_real_call_path() {
 
     // A hostname that genuinely resolves to loopback is still refused, and the
     // error has to tell the user what to type instead.
-    let err = proxy::http_request(&client, "GET", "http://localhost:8090/api/v1/trades", None)
+    let err = proxy::http_request(&client, "GET", "http://localhost:8090/api/v1/trades", None, None)
         .await
         .expect_err("hostnames are refused");
     assert!(err.contains("127.0.0.1"), "unhelpful error: {err}");
@@ -148,7 +147,7 @@ async fn guards_fire_on_the_real_call_path() {
         ("CONNECT", "http://127.0.0.1:8090/api/v1/trades"),
     ] {
         assert!(
-            proxy::http_request(&client, method, url, None).await.is_err(),
+            proxy::http_request(&client, method, url, None, None).await.is_err(),
             "{method} {url} should have been refused"
         );
     }
@@ -174,7 +173,7 @@ async fn carries_a_websocket_session() {
         .unwrap();
     });
 
-    let mut ws = proxy::ws_connect(&format!("ws://127.0.0.1:{port}/websocket"))
+    let mut ws = proxy::ws_connect(&format!("ws://127.0.0.1:{port}/websocket"), None)
         .await
         .expect("websocket should connect");
 
@@ -205,7 +204,7 @@ async fn live_bisq_node_speaks_through_the_proxy() {
     let base = base.trim_end_matches('/').to_string();
 
     let client = proxy::build_client();
-    let res = proxy::http_request(&client, "GET", &format!("{base}/market-price/quotes"), None)
+    let res = proxy::http_request(&client, "GET", &format!("{base}/market-price/quotes"), None, None)
         .await
         .expect("the node should answer through the proxy");
     assert_eq!(res.status, 200, "body: {}", res.body);
@@ -222,7 +221,7 @@ async fn live_bisq_node_speaks_through_the_proxy() {
         .split('/')
         .next()
         .unwrap();
-    let mut ws = proxy::ws_connect(&format!("ws://{origin}/websocket"))
+    let mut ws = proxy::ws_connect(&format!("ws://{origin}/websocket"), None)
         .await
         .expect("the node's WebSocket should accept the proxy");
 
@@ -246,11 +245,135 @@ async fn live_bisq_node_speaks_through_the_proxy() {
     eprintln!("live_bisq: proxied REST + WebSocket against {base} OK");
 }
 
+/// The authenticated path, end to end, against a node with
+/// `authorizationRequired=true`. This is the only place the whole thing can be
+/// proven: Bisq authenticates the WebSocket on handshake headers, which a
+/// browser cannot set, so authenticated mode exists *only* through this shell.
+///
+///   BISQ_AUTH_API_URL=http://127.0.0.1:8092/api/v1 \
+///   BISQ_PAIRING_CODE_ID=<uuid> cargo test -- --nocapture live_auth
+#[tokio::test]
+async fn live_auth_pairing_and_authenticated_websocket() {
+    let (Ok(base), Ok(code_id)) = (
+        std::env::var("BISQ_AUTH_API_URL"),
+        std::env::var("BISQ_PAIRING_CODE_ID"),
+    ) else {
+        eprintln!("skipping live_auth: set BISQ_AUTH_API_URL and BISQ_PAIRING_CODE_ID");
+        return;
+    };
+    let base = base.trim_end_matches('/').to_string();
+    let client = proxy::build_client();
+
+    // 1. With no credentials the node refuses. Note the code: the request is
+    //    let through unauthenticated and then denied by the *authorization*
+    //    filter, so this is 403, not 401.
+    let res = proxy::http_request(&client, "GET", &format!("{base}/market-price/quotes"), None, None)
+        .await
+        .expect("transport works even when the node refuses");
+    assert_eq!(res.status, 403, "an auth node must reject a credential-less call");
+
+    // 1b. A *bad session*, by contrast, is 401 — and that distinction is load
+    //     bearing: the adapter renews its session on 401 only, because renewing
+    //     would not fix a 403 permission denial.
+    let mut bogus = std::collections::HashMap::new();
+    bogus.insert("Bisq-Client-Id".to_string(), "not-a-client".to_string());
+    bogus.insert("Bisq-Session-Id".to_string(), "not-a-session".to_string());
+    let res = proxy::http_request(
+        &client,
+        "GET",
+        &format!("{base}/market-price/quotes"),
+        None,
+        Some(&bogus),
+    )
+    .await
+    .expect("transport works even when the node refuses");
+    // Measured, not assumed: this node answers 403 here too. Authorization
+    // denies the call before authentication has marked it as anyone, so a
+    // client that only renews on 401 would never renew at all — which is
+    // exactly the bug this test caught in the adapter.
+    assert_eq!(res.status, 403, "an invalid session is refused (403 on this node)");
+
+    // 2. Trade the pairing code for credentials.
+    let body = serde_json::json!({
+        "version": 1,
+        "pairingCodeId": code_id,
+        "clientName": "CryptoBridge live test",
+    })
+    .to_string();
+    let res = proxy::http_request(&client, "POST", &format!("{base}/access/pairing"), Some(body), None)
+        .await
+        .expect("pairing request should reach the node");
+    assert!(res.status < 300, "pairing failed: HTTP {} {}", res.status, res.body);
+
+    let v: serde_json::Value = serde_json::from_str(&res.body).expect("pairing response is JSON");
+    let client_id = v["clientId"].as_str().expect("clientId").to_string();
+    let session_id = v["sessionId"].as_str().expect("sessionId").to_string();
+    assert!(v["clientSecret"].as_str().is_some(), "clientSecret must be issued");
+
+    let mut auth = std::collections::HashMap::new();
+    auth.insert("Bisq-Client-Id".to_string(), client_id);
+    auth.insert("Bisq-Session-Id".to_string(), session_id);
+
+    // 3. The same call now succeeds with the session headers.
+    let res = proxy::http_request(
+        &client,
+        "GET",
+        &format!("{base}/market-price/quotes"),
+        None,
+        Some(&auth),
+    )
+    .await
+    .expect("authenticated request should reach the node");
+    assert_eq!(res.status, 200, "authenticated call failed: {}", res.body);
+
+    // 4. The WebSocket, which is the part only this shell can do.
+    let origin = base
+        .strip_prefix("http://")
+        .expect("plaintext loopback")
+        .split('/')
+        .next()
+        .unwrap();
+    let ws_url = format!("ws://{origin}/websocket");
+
+    let mut ws = proxy::ws_connect(&ws_url, Some(&auth))
+        .await
+        .expect("authenticated websocket should be accepted");
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(
+        r#"{"type":"SubscriptionRequest","requestId":"auth-probe","topic":"TRADE_PROPERTIES","parameter":null}"#.into(),
+    ))
+    .await
+    .unwrap();
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(15), ws.next())
+        .await
+        .expect("the node should answer within 15s")
+        .expect("stream ended")
+        .expect("frame error");
+    let text = frame.into_text().unwrap();
+    assert!(
+        text.contains("TRADE_PROPERTIES") || text.contains("SubscriptionResponse"),
+        "unexpected first frame: {text}"
+    );
+
+    // 5. Note on what this does NOT assert.
+    //
+    //    Measured on bisq2 2.1.11 with authorizationRequired=true: an
+    //    *unauthenticated* WebSocket handshake is accepted and subscriptions
+    //    are answered (MARKET_PRICE returned live data), even though the REST
+    //    API refuses the same caller with 403. That looks like a gap on the
+    //    node's side — reported in docs/PAIRING_AUTH.md — but it is Bisq's
+    //    behaviour, not ours, so this test does not assert it in either
+    //    direction: pinning "unauthenticated is accepted" would enshrine a bug,
+    //    and pinning "rejected" would fail today. We send the session headers
+    //    regardless, which is correct now and stays correct if Bisq tightens.
+
+    eprintln!("live_auth: paired, authenticated REST + WebSocket both OK");
+}
+
 #[tokio::test]
 async fn websocket_path_is_allowlisted_too() {
-    assert!(proxy::ws_connect("ws://127.0.0.1:8090/api/v1/trades")
+    assert!(proxy::ws_connect("ws://127.0.0.1:8090/api/v1/trades", None)
         .await
         .is_err());
-    assert!(proxy::ws_connect("wss://127.0.0.1:8090/websocket").await.is_err());
-    assert!(proxy::ws_connect("ws://evil.example/websocket").await.is_err());
+    assert!(proxy::ws_connect("wss://127.0.0.1:8090/websocket", None).await.is_err());
+    assert!(proxy::ws_connect("ws://evil.example/websocket", None).await.is_err());
 }

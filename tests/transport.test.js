@@ -94,7 +94,10 @@ test('request goes through invoke and returns status plus body', async () => {
   assert.deepEqual(res, { status: 200, body: '{"ok":true}' });
   assert.deepEqual(calls[0], {
     cmd: 'bisq_http',
-    args: { method: 'POST', url: 'http://127.0.0.1:8090/api/v1/trades', body: '{"a":1}' },
+    args: {
+      method: 'POST', url: 'http://127.0.0.1:8090/api/v1/trades',
+      body: '{"a":1}', headers: null,
+    },
   });
 });
 
@@ -255,4 +258,31 @@ test('web openSocket reports a close that happens after opening', async () => {
   await pending;
   FakeWebSocket.last.close();
   assert.equal(closed, 1);
+});
+
+test('web openSocket refuses when auth headers are required', async () => {
+  // Bisq authenticates the WebSocket on handshake headers and neither a
+  // browser's WebSocket nor Node's can set them. Failing loudly beats opening
+  // a socket the node will reject for reasons nobody can see.
+  const t = new WebTransport({ WebSocket: FakeWebSocket });
+  await assert.rejects(
+    () => t.openSocket('ws://127.0.0.1:8090/websocket', {
+      headers: { 'Bisq-Client-Id': 'x', 'Bisq-Session-Id': 'y' },
+    }),
+    /cannot set WebSocket handshake headers/,
+  );
+});
+
+test('tauri openSocket forwards auth headers to the shell', async () => {
+  const { scope, calls } = fakeTauri();
+  await pickTransport(scope).openSocket('ws://127.0.0.1:8090/websocket', {
+    headers: { 'Bisq-Client-Id': 'cid', 'Bisq-Session-Id': 'sid' },
+  });
+  assert.deepEqual(calls[0], {
+    cmd: 'bisq_ws_open',
+    args: {
+      url: 'ws://127.0.0.1:8090/websocket',
+      headers: { 'Bisq-Client-Id': 'cid', 'Bisq-Session-Id': 'sid' },
+    },
+  });
 });

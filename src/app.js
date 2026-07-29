@@ -72,11 +72,34 @@ function createAdapter() {
         addressProvider: () => state.receiveAddress,
         network,
       });
+      // Authenticated nodes (authorizationRequired=true): paste the pairing QR
+      // payload once as `cryptobridge.pairing`. It is spent immediately and
+      // replaced by the credentials the node issues.
+      //
+      // Those credentials live in localStorage for now, which is honest but not
+      // ideal — they are readable by any script that runs in this webview. The
+      // audit found no XSS path today, and the alternative is re-pairing on
+      // every launch; moving them into the Rust shell (so the webview never
+      // holds the secret at all) is the follow-up. See docs/PAIRING_AUTH.md.
+      let credentials = null;
+      try {
+        const stored = localStorage.getItem('cryptobridge.credentials');
+        if (stored) credentials = JSON.parse(stored);
+      } catch { /* absent or unreadable — pair again */ }
+
       return new BisqAdapter({
         restBaseUrl: setting(q, 'node') || undefined,
         wsUrl: setting(q, 'ws') || undefined,
         network,
         wallet,
+        pairingCode: setting(q, 'pairing') || undefined,
+        credentials,
+        onCredentials: (c) => {
+          try {
+            localStorage.setItem('cryptobridge.credentials', JSON.stringify(c));
+            localStorage.removeItem('cryptobridge.pairing');   // single-use, now spent
+          } catch { /* storage denied: this session stays paired, the next re-pairs */ }
+        },
       });
     } catch (err) {
       console.error('bisq backend not usable, falling back to mock:', err.message);

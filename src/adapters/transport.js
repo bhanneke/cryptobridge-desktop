@@ -35,8 +35,8 @@ export class WebTransport {
     this.name = 'web';
   }
 
-  async request(method, url, body) {
-    const headers = {};
+  async request(method, url, body, extraHeaders) {
+    const headers = { ...(extraHeaders ?? {}) };
     if (body !== undefined && body !== null) headers['content-type'] = 'application/json';
     const res = await this.scope.fetch(url, {
       method,
@@ -48,6 +48,16 @@ export class WebTransport {
 
   openSocket(url, handlers = {}) {
     return new Promise((resolve, reject) => {
+      // Bisq authenticates the WebSocket on handshake headers, and neither a
+      // browser's WebSocket nor Node's can set them. Say so plainly instead of
+      // opening a connection that the node will just reject.
+      if (handlers.headers && Object.keys(handlers.headers).length) {
+        reject(new Error(
+          'this transport cannot set WebSocket handshake headers, which an authenticated '
+          + 'Bisq node requires — use the desktop app, whose Rust shell can',
+        ));
+        return;
+      }
       let ws;
       try {
         ws = new this.scope.WebSocket(url);
@@ -94,9 +104,11 @@ export class TauriTransport {
     this.listening = null;
   }
 
-  async request(method, url, body) {
+  async request(method, url, body, extraHeaders) {
     try {
-      const res = await this.invoke('bisq_http', { method, url, body: body ?? null });
+      const res = await this.invoke('bisq_http', {
+        method, url, body: body ?? null, headers: extraHeaders ?? null,
+      });
       return { status: res.status, body: res.body };
     } catch (e) {
       throw asError(e);
@@ -140,7 +152,7 @@ export class TauriTransport {
 
     let id;
     try {
-      id = await this.invoke('bisq_ws_open', { url });
+      id = await this.invoke('bisq_ws_open', { url, headers: handlers.headers ?? null });
     } catch (e) {
       throw asError(e);
     }

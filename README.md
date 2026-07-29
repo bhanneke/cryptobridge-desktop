@@ -20,8 +20,8 @@ a pluggable `OnrampAdapter` with a working mock backend, so the UI is real befor
 > buyer-side BTC/EUR trade runs end to end through the adapter, and inside the desktop app every
 > byte of that traffic goes through the Rust shell so the webview keeps `connect-src 'self'`.
 > The UI is now the real flow throughout: the prototype's demo fiction has been **deleted**, not
-> hidden behind a flag. What is *not* done: pairing auth, node supervision, Tor, reproducible
-> builds, and the security audit. Do not point this at mainnet. No real money has moved.
+> hidden behind a flag. What is *not* done: node supervision, Tor, reproducible builds and
+> no-US distribution. Do not point this at mainnet. No real money has moved.
 
 ## What this is
 
@@ -139,6 +139,7 @@ rather than filing publicly.
 │   │   ├── mock-adapter.js   # in-memory backend, the default
 │   │   ├── bisq-adapter.js   # real backend: Bisq 2 REST + WebSocket
 │   │   ├── transport.js      # I/O seam: Tauri IPC in the app, fetch/WS in a browser
+│   │   ├── pairing.js        # Bisq pairing-code decoding (authenticated nodes)
 │   │   ├── wallet.js         # external-wallet seam + bech32/bech32m validation
 │   │   └── epc.js            # EPC069-12 (GiroCode) payloads, SEPA parsing
 │   ├── styles.css            # component layer
@@ -166,7 +167,7 @@ rather than filing publicly.
    `?backend=bisq&node=…&addr=…` in a browser, or — since the packaged app has no query string —
    the same keys in `localStorage` as `cryptobridge.backend`, `cryptobridge.node`,
    `cryptobridge.addr`, `cryptobridge.network`. The mock stays the default in both; a real
-   backend is never selected implicitly, and a proper connect screen comes with the offer book. Remaining before release: pairing auth + the payment screen (below).
+   backend is never selected implicitly, and a proper connect screen comes with the offer book.
 3. ~~**Payment screen**~~ **Done (2026-07-24)** — the trade now pauses at the fiat leg and shows a
    real payment screen: seller IBAN + a **scannable EPC069-12 GiroCode QR** (dependency-free encoder
    in [`src/vendor/qr.js`](src/vendor/qr.js), verified by decoding every output with OpenCV),
@@ -194,8 +195,15 @@ rather than filing publicly.
    Five findings, all fixed, each with a regression test that fails against the old code:
    the worst let a seller inject newlines into their bank details so the **GiroCode paid a
    different account than the screen displayed**. Report: [docs/SECURITY_AUDIT.md](docs/SECURITY_AUDIT.md).
-7. **Before release** — pairing auth, node supervision and Tor in the Rust shell, reproducible
-   builds, and no-US distribution.
+7. ~~**Pairing auth**~~ **Done (2026-07-25)** — the adapter used to refuse authenticated nodes
+   outright, so the app only worked against one with authorization switched off (which is *not*
+   the api-app default). It now exchanges a Bisq pairing code for credentials and a session,
+   renews sessions automatically, and sends the handshake headers the node's WebSocket requires.
+   Verified against a live node with `authorizationRequired=true`.
+   Report: [docs/PAIRING_AUTH.md](docs/PAIRING_AUTH.md) — including two things that had to be
+   measured rather than assumed, one of which was a bug in our own retry logic.
+8. **Before release** — node supervision and Tor in the Rust shell, reproducible builds, and
+   no-US distribution.
 
 Details, threat model and the regulatory analysis live in the
 [implementation plan](https://github.com/bhanneke/crypto-onramp/blob/main/docs/IMPLEMENTATION_PLAN.md).

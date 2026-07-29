@@ -48,6 +48,40 @@ pub const WS_PATH: &str = "/websocket";
 
 const ALLOWED_METHODS: [&str; 5] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
+/// The only request headers the webview may set. Bisq authenticates with
+/// exactly these two; allowing arbitrary headers would widen the app's single
+/// hole in the CSP sandbox for no benefit.
+pub const ALLOWED_HEADERS: [&str; 2] = ["bisq-client-id", "bisq-session-id"];
+
+/// Max length of a header value we will forward.
+pub const MAX_HEADER_VALUE: usize = 512;
+
+/// Validate caller-supplied headers, returning them lower-cased.
+pub fn check_headers(
+    headers: Option<&std::collections::HashMap<String, String>>,
+) -> Result<Vec<(String, String)>, String> {
+    let mut out = Vec::new();
+    let Some(map) = headers else { return Ok(out) };
+    for (name, value) in map {
+        let lower = name.trim().to_ascii_lowercase();
+        if !ALLOWED_HEADERS.contains(&lower.as_str()) {
+            return Err(format!(
+                "header {name:?} is not allowed (permitted: {})",
+                ALLOWED_HEADERS.join(", ")
+            ));
+        }
+        // Control characters in a value are how header injection works.
+        if value.is_empty()
+            || value.len() > MAX_HEADER_VALUE
+            || value.bytes().any(|b| b < 0x20 || b == 0x7f)
+        {
+            return Err(format!("header {name:?} has an invalid value"));
+        }
+        out.push((lower, value.clone()));
+    }
+    Ok(out)
+}
+
 /// Which allowlist a URL is checked against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -180,9 +214,11 @@ pub async fn http_request(
     method: &str,
     raw_url: &str,
     body: Option<String>,
+    headers: Option<&std::collections::HashMap<String, String>>,
 ) -> Result<HttpResponse, String> {
     let method = check_method(method)?;
     let url = check_url(raw_url, Kind::Http)?;
+    let extra = check_headers(headers)?;
 
     if let Some(b) = &body {
         if b.len() > MAX_REQUEST_BODY {
@@ -196,6 +232,9 @@ pub async fn http_request(
     let verb = reqwest::Method::from_bytes(method.as_bytes())
         .map_err(|e| format!("bad method {method:?}: {e}"))?;
     let mut req = client.request(verb, url.clone());
+    for (name, value) in &extra {
+        req = req.header(name.as_str(), value.as_str());
+    }
     if let Some(b) = body {
         req = req.header("content-type", "application/json").body(b);
     }
@@ -233,17 +272,43 @@ pub type BisqWs = tokio_tungstenite::WebSocketStream<
 >;
 
 /// Check, then connect. Kept next to the checks so no caller can skip them.
-pub async fn ws_connect(raw_url: &str) -> Result<BisqWs, String> {
+///
+/// `headers` carries Bisq's session authentication: the node authenticates the
+/// WebSocket on handshake headers with no query-string fallback, which is why
+/// an authenticated node is only reachable through this shell and not from a
+/// browser's WebSocket.
+pub async fn ws_connect(
+    raw_url: &str,
+    headers: Option<&std::collections::HashMap<String, String>>,
+) -> Result<BisqWs, String> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue};
+
     let target = check_url(raw_url, Kind::Ws)?;
+    let extra = check_headers(headers)?;
+
+    let mut request = target
+        .as_str()
+        .into_client_request()
+        .map_err(|e| format!("could not build the WebSocket request: {e}"))?;
+    {
+        let map = request.headers_mut();
+        for (name, value) in &extra {
+            let n = HeaderName::from_bytes(name.as_bytes())
+                .map_err(|e| format!("bad header name {name:?}: {e}"))?;
+            let v = HeaderValue::from_str(value)
+                .map_err(|e| format!("bad value for header {name:?}: {e}"))?;
+            map.insert(n, v);
+        }
+    }
 
     let mut cfg = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default();
     cfg.max_message_size = Some(MAX_WS_FRAME);
     cfg.max_frame_size = Some(MAX_WS_FRAME);
 
-    let (stream, _resp) =
-        tokio_tungstenite::connect_async_with_config(target.as_str(), Some(cfg), false)
-            .await
-            .map_err(|e| format!("Bisq WebSocket unreachable at {target}: {e}"))?;
+    let (stream, _resp) = tokio_tungstenite::connect_async_with_config(request, Some(cfg), false)
+        .await
+        .map_err(|e| format!("Bisq WebSocket unreachable at {target}: {e}"))?;
     Ok(stream)
 }
 
@@ -339,6 +404,41 @@ mod tests {
         )
         .unwrap();
         assert_eq!(u.query(), Some("x=1"));
+    }
+
+    #[test]
+    fn header_allowlist() {
+        use std::collections::HashMap;
+
+        // Nothing supplied is fine — an open node needs no headers.
+        assert!(check_headers(None).unwrap().is_empty());
+
+        let mut ok = HashMap::new();
+        ok.insert("Bisq-Client-Id".to_string(), "abc".to_string());
+        ok.insert("Bisq-Session-Id".to_string(), "def".to_string());
+        let out = check_headers(Some(&ok)).unwrap();
+        assert_eq!(out.len(), 2);
+        // Normalised to lower case so the allowlist cannot be case-dodged.
+        assert!(out.iter().all(|(k, _)| k.chars().all(|c| !c.is_uppercase())));
+
+        // Anything outside the allowlist is refused — the webview does not get
+        // to choose arbitrary headers just because it can reach this proxy.
+        for bad in ["Authorization", "Cookie", "Host", "X-Forwarded-For", "content-length"] {
+            let mut m = HashMap::new();
+            m.insert(bad.to_string(), "x".to_string());
+            assert!(check_headers(Some(&m)).is_err(), "{bad} should be refused");
+        }
+    }
+
+    #[test]
+    fn header_values_cannot_carry_control_characters() {
+        use std::collections::HashMap;
+        // CR/LF in a header value is how header injection works.
+        for bad in ["a\r\nX-Evil: 1", "a\nb", "a\0b", "", &"x".repeat(MAX_HEADER_VALUE + 1)] {
+            let mut m = HashMap::new();
+            m.insert("Bisq-Session-Id".to_string(), bad.to_string());
+            assert!(check_headers(Some(&m)).is_err(), "{bad:?} should be refused");
+        }
     }
 
     #[test]
