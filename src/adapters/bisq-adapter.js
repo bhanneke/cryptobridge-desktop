@@ -6,8 +6,11 @@
  * for the design. It never holds fiat and, in external-wallet mode, never holds
  * keys.
  *
- * Runtime: uses global fetch + WebSocket (present in the Tauri webview and in
- * Node ≥ 18/22), so the same file backs the app and the contract test.
+ * Runtime: all I/O goes through a Transport (see transport.js). In a browser or
+ * in Node ≥ 18 that is global fetch + WebSocket; inside the packaged app it is
+ * Tauri IPC to the Rust shell, because the CSP holds `connect-src` at 'self'
+ * and the webview may not open a socket to 127.0.0.1 itself. Same file backs
+ * the app, the browser dev server and the contract test.
  *
  * Trust/verification model to keep honest:
  *  - BTC delivery is to a buyer-supplied address (wallet seam), non-custodial.
@@ -19,6 +22,10 @@
 
 import { OnrampAdapter, TradeState } from './onramp-adapter.js';
 import { epcPayload, parseSepaAccountData } from './epc.js';
+import { pickTransport } from './transport.js';
+import {
+  parsePairingInput, isPairingExpired, missingPermissions, PAIRING_CODE_VERSION,
+} from './pairing.js';
 
 /** Bisq `tradeState` (compound names — match by substring) → our TradeState.
  *  Verified against the buyer-side sequence captured in the spike. */
@@ -45,6 +52,10 @@ export function mapBisqState(raw) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** Statuses that may mean "your session is no longer good". See the note in
+ *  _req: a real node answers 403 for both an absent and an expired session. */
+const AUTH_FAILURE_STATUS = new Set([401, 403]);
+
 export class BisqAdapter extends OnrampAdapter {
   /**
    * @param {Object} opts
@@ -54,7 +65,15 @@ export class BisqAdapter extends OnrampAdapter {
    * @param {string} [opts.network='mainnet']  chain the node runs on (display + address checks)
    * @param {string} [opts.nickName='cryptobridge']  identity nickname if one must be created
    * @param {boolean} [opts.autoConfirmBtcReceipt=false]  auto-send BTC_CONFIRMED+CLOSE_TRADE on release (tests/demo only)
-   * @param {string} [opts.pairingCode]  present → authenticated remote-node mode (see auth note; not yet implemented)
+   * @param {string} [opts.pairingCode]  a Bisq pairing QR payload or code id — required the
+   *        first time you connect to a node with authorizationRequired=true
+   * @param {{clientId:string, clientSecret:string}} [opts.credentials]  previously paired
+   *        credentials, so a returning user does not have to pair again
+   * @param {string} [opts.clientName='CryptoBridge Desktop']  shown in the node's client list
+   * @param {(c:{clientId:string,clientSecret:string})=>any} [opts.onCredentials]  called once
+   *        after pairing so the host can persist them; this class never stores them itself
+   * @param {import('./transport.js').WebTransport} [opts.transport]  I/O seam; defaults to
+   *        Tauri IPC inside the app and fetch/WebSocket elsewhere (see transport.js)
    */
   constructor({
     restBaseUrl = 'http://127.0.0.1:8090/api/v1',
@@ -64,16 +83,26 @@ export class BisqAdapter extends OnrampAdapter {
     nickName = 'cryptobridge',
     autoConfirmBtcReceipt = false,
     pairingCode,
+    credentials,
+    clientName = 'CryptoBridge Desktop',
+    onCredentials,
+    transport,
   } = {}) {
     super();
     if (!wallet) throw new Error('BisqAdapter requires a wallet (see src/adapters/wallet.js)');
     this.rest = restBaseUrl.replace(/\/$/, '');
     this.wsUrl = wsUrl;
+    this.transport = transport ?? pickTransport();
     this.wallet = wallet;
     this.network = network;
     this.nickName = nickName;
     this.autoConfirmBtcReceipt = autoConfirmBtcReceipt;
     this.pairingCode = pairingCode;
+    this.clientName = clientName;
+    this.onCredentials = onCredentials;
+    this.credentials = credentials ?? null;   // {clientId, clientSecret} — durable
+    this.sessionId = null;                    // short-lived, never persisted
+    this.sessionExpiry = null;
 
     this.ws = null;
     this.closing = false;
@@ -94,28 +123,43 @@ export class BisqAdapter extends OnrampAdapter {
   }
 
   // --- REST helper -----------------------------------------------------------
+  /** Headers that authenticate a request, or undefined on an open node. */
+  _authHeaders() {
+    if (!this.credentials?.clientId || !this.sessionId) return undefined;
+    return {
+      'Bisq-Client-Id': this.credentials.clientId,
+      'Bisq-Session-Id': this.sessionId,
+    };
+  }
+
   /** @returns {Promise<{status:number, data:any}>} throws on HTTP >= 300 */
-  async _req(method, path, body) {
-    if (this.pairingCode) {
-      // Production talks to the user's own node behind Bisq's pairing flow
-      // (QR / 5-min code → clientId/secret/session). The spike ran on an
-      // unauthenticated loopback node, so this path is unverified; refuse
-      // rather than send blind, unauthenticated-looking requests.
-      throw new Error('BisqAdapter: authenticated (pairing) mode is not implemented yet — run against a loopback dev node without authorizationRequired');
-    }
-    const headers = {};
-    if (body !== undefined) headers['content-type'] = 'application/json';
+  async _req(method, path, body, { retryOnAuthFailure = true } = {}) {
+    const send = () => this.transport.request(
+      method,
+      this.rest + path,
+      body !== undefined ? JSON.stringify(body) : undefined,
+      this._authHeaders(),
+    );
+
     let res;
     try {
-      res = await fetch(this.rest + path, {
-        method,
-        headers,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-      });
+      res = await send();
+      // Sessions are deliberately short-lived. Renew once and retry rather than
+      // failing a call — and possibly a trade — on an expiry we can just fix.
+      //
+      // Both 401 and 403 count. Measured against a real node with
+      // authorizationRequired=true, an expired *and* an absent session both come
+      // back as 403, because authorization denies the call before authentication
+      // has marked it as anyone. Retrying only on 401 would mean never renewing
+      // at all. A genuine permission denial costs one wasted renewal, once.
+      if (AUTH_FAILURE_STATUS.has(res.status) && retryOnAuthFailure && this.credentials) {
+        await this._renewSession();
+        res = await send();
+      }
     } catch (e) {
       throw new Error(`Bisq node unreachable at ${this.rest} (${method} ${path}): ${e.message}`);
     }
-    const text = await res.text();
+    const text = res.body;
     let data;
     try { data = text ? JSON.parse(text) : null; } catch { data = text; }
     if (res.status >= 300) {
@@ -126,6 +170,84 @@ export class BisqAdapter extends OnrampAdapter {
       throw err;
     }
     return { status: res.status, data };
+  }
+
+  // --- pairing / session -----------------------------------------------------
+
+  /** Exchange a pairing code for durable credentials plus a session.
+   *
+   *  The code is single-use and short-lived; the node regenerates one every few
+   *  minutes. `clientSecret` is what actually grants access from then on, so it
+   *  is handed to `onCredentials` for the host to store — this class keeps it
+   *  in memory only and never writes it anywhere.
+   *
+   *  @returns {Promise<{clientId:string, permissions:string[]|null, webSocketUrl:string|null}>} */
+  async pair() {
+    if (!this.pairingCode) throw new Error('BisqAdapter.pair(): no pairing code supplied');
+    const parsed = parsePairingInput(this.pairingCode);
+
+    if (isPairingExpired(parsed)) {
+      throw new Error('pairing code has expired — read a fresh one from your node and try again');
+    }
+    // Fail here rather than as a 403 halfway through a trade.
+    const missing = missingPermissions(parsed);
+    if (missing.length) {
+      throw new Error(`this pairing code does not grant ${missing.join(', ')} — pair again from a node that allows them`);
+    }
+
+    const res = await this._req('POST', '/access/pairing', {
+      version: PAIRING_CODE_VERSION,
+      pairingCodeId: parsed.pairingCodeId,
+      clientName: this.clientName,
+    }, { retryOnAuthFailure: false });
+
+    const d = res.data ?? {};
+    if (!d.clientId || !d.clientSecret || !d.sessionId) {
+      throw new Error(`pairing response missing credentials: ${JSON.stringify(d)}`);
+    }
+    this.credentials = { clientId: d.clientId, clientSecret: d.clientSecret };
+    this.sessionId = d.sessionId;
+    this.sessionExpiry = d.sessionExpiryDate ?? null;
+    // The code is now spent; drop it so a reconnect cannot try to reuse it.
+    this.pairingCode = null;
+
+    try { await this.onCredentials?.(this.credentials); }
+    catch (e) { console.error('storing Bisq credentials failed', e); }
+
+    return {
+      clientId: d.clientId,
+      permissions: parsed.permissions,
+      webSocketUrl: parsed.webSocketUrl,
+    };
+  }
+
+  /** Trade the durable credentials for a fresh short-lived session. */
+  async _renewSession() {
+    if (!this.credentials) throw new Error('no credentials to renew a session with — pair first');
+    const res = await this._req('POST', '/access/session', {
+      clientId: this.credentials.clientId,
+      clientSecret: this.credentials.clientSecret,
+    }, { retryOnAuthFailure: false });
+    const d = res.data ?? {};
+    if (!d.sessionId) throw new Error(`session renewal returned no sessionId: ${JSON.stringify(d)}`);
+    this.sessionId = d.sessionId;
+    this.sessionExpiry = d.expiresAt ?? null;
+  }
+
+  /** Prefer stored credentials; fall back to the pairing code if they are
+   *  stale (revoked node-side, or a rebuilt node). */
+  async _authenticate() {
+    if (this.credentials) {
+      try {
+        await this._renewSession();
+        return;
+      } catch (e) {
+        if (!this.pairingCode) throw e;
+        console.warn('stored Bisq credentials rejected, re-pairing:', e.message);
+        this.credentials = null;
+      }
+    }
+    if (this.pairingCode) await this.pair();
   }
 
   /** PATCH a trade event, retrying while the peer's message propagates between
@@ -148,6 +270,9 @@ export class BisqAdapter extends OnrampAdapter {
   // --- lifecycle -------------------------------------------------------------
   async init() {
     this._setStatus('connecting');
+    // Authenticate first if this node wants it: every call below, and the
+    // WebSocket handshake, need the session headers.
+    if (this.pairingCode || this.credentials) await this._authenticate();
     // Reachability + market rate in one call.
     await this._refreshRate();
     // Ensure a buyer identity exists (buyers need no reputation).
@@ -352,11 +477,23 @@ export class BisqAdapter extends OnrampAdapter {
   /** User confirms they see the BTC in their own wallet → close the Bisq trade.
    *  Not part of OnrampAdapter (the mock auto-completes); bisq needs an explicit
    *  step because we don't run a chain watcher in external-wallet mode. */
+  /** The user attests that the bitcoin arrived in their own wallet. In
+   *  external-wallet mode this is the authoritative signal — we cannot see the
+   *  chain — so it is also what unlocks COMPLETE (see the note in
+   *  _applyTradeDelta). Emitting here matters: the node may already have sent
+   *  its final state, which we held back, and it will not necessarily repeat
+   *  it, which would otherwise leave the UI waiting forever. */
   async confirmBtcReceived(tradeId) {
     if (this.btcReceiptSent.has(tradeId)) return;
     this.btcReceiptSent.add(tradeId);
-    await this._tradeEvent(tradeId, 'BTC_CONFIRMED');
-    await this._tradeEvent(tradeId, 'CLOSE_TRADE');
+    try {
+      await this._tradeEvent(tradeId, 'BTC_CONFIRMED');
+      await this._tradeEvent(tradeId, 'CLOSE_TRADE');
+    } catch (e) {
+      this.btcReceiptSent.delete(tradeId);   // let the user retry
+      throw e;
+    }
+    this._emitTrade(tradeId, TradeState.COMPLETE);
   }
 
   // --- wallet (delegated to the seam) ---------------------------------------
@@ -373,37 +510,52 @@ export class BisqAdapter extends OnrampAdapter {
   async withdraw(address, amountSats) { return this.wallet.withdraw(address, amountSats); }
 
   // --- WebSocket -------------------------------------------------------------
-  _openWs() {
-    return new Promise((resolve) => {
-      let settled = false;
-      let ws;
-      try { ws = new WebSocket(this.wsUrl); }
-      catch { this._setStatus('error'); resolve(); return; }
-      this.ws = ws;
-      ws.onopen = () => {
-        this.reconnectAttempts = 0;
-        // The "type" discriminator is REQUIRED — without it the server silently
-        // drops the subscription ("No service found").
-        ws.send(JSON.stringify({ type: 'SubscriptionRequest', requestId: 'sub-trades', topic: 'TRADES', parameter: null }));
-        ws.send(JSON.stringify({ type: 'SubscriptionRequest', requestId: 'sub-props', topic: 'TRADE_PROPERTIES', parameter: null }));
-        this._setStatus('connected');
-        if (!settled) { settled = true; resolve(); }
-      };
-      ws.onmessage = (e) => this._onWsFrame(String(e.data));
-      ws.onerror = () => { this._setStatus('error'); if (!settled) { settled = true; resolve(); } };
-      ws.onclose = () => {
-        this.ws = null;
-        if (this.closing) return;
-        this._setStatus('connecting');
-        this._scheduleReconnect();
-      };
-    });
+  /** Resolves once subscribed, or after scheduling a retry — never rejects, so
+   *  init() stays usable against a node that is not up yet. */
+  async _openWs() {
+    this.wsOpening = true;
+    let sock;
+    try {
+      sock = await this.transport.openSocket(this.wsUrl, {
+        // Bisq authenticates the WebSocket on the *handshake headers* — there
+        // is no query-string fallback — so an authenticated node is only
+        // reachable through a transport that can set them (the Rust shell).
+        headers: this._authHeaders(),
+        onMessage: (raw) => this._onWsFrame(raw),
+        onError: () => this._setStatus('error'),
+        onClose: () => {
+          this.ws = null;
+          if (this.closing) return;
+          this._setStatus('connecting');
+          this._scheduleReconnect();
+        },
+      });
+    } catch {
+      this.wsOpening = false;
+      this._setStatus('error');
+      if (!this.closing) this._scheduleReconnect();
+      return;
+    }
+    this.wsOpening = false;
+
+    if (this.closing) { sock.close(); return; }   // closed while the handshake ran
+    this.ws = sock;
+    this.reconnectAttempts = 0;
+    // The "type" discriminator is REQUIRED — without it the server silently
+    // drops the subscription ("No service found").
+    sock.send(JSON.stringify({ type: 'SubscriptionRequest', requestId: 'sub-trades', topic: 'TRADES', parameter: null }));
+    sock.send(JSON.stringify({ type: 'SubscriptionRequest', requestId: 'sub-props', topic: 'TRADE_PROPERTIES', parameter: null }));
+    this._setStatus('connected');
   }
 
   _scheduleReconnect() {
     if (this.closing) return;
     const delay = Math.min(30000, 1000 * 2 ** this.reconnectAttempts++);
-    setTimeout(() => { if (!this.closing && !this.ws) this._openWs(); }, delay);
+    // `wsOpening` guards the window where a handshake is in flight but `ws` is
+    // not yet set, which would otherwise let a retry open a second socket.
+    setTimeout(() => {
+      if (!this.closing && !this.ws && !this.wsOpening) this._openWs();
+    }, delay);
   }
 
   _onWsFrame(raw) {
@@ -442,8 +594,20 @@ export class BisqAdapter extends OnrampAdapter {
       if (/TAKER_RECEIVED_TAKE_OFFER_RESPONSE/.test(delta.tradeState)) {
         this._maybeSendBtcAddress(tradeId);
       }
-      if (mapped) this._emitTrade(tradeId, mapped);
-      if (mapped === TradeState.BTC_RELEASED && this.autoConfirmBtcReceipt) {
+      // SECURITY (audit finding 3): COMPLETE asserts "the bitcoin arrived", and
+      // in external-wallet mode only the user can know that — we cannot see
+      // their wallet. A hostile peer or a lying node can put any tradeState on
+      // the wire, including one that maps straight to COMPLETE, which would
+      // make the UI declare success right after the user sent their euros.
+      // Hold the trade at BTC_RELEASED until confirmBtcReceived() has run.
+      let effective = mapped;
+      if (effective === TradeState.COMPLETE
+          && !this.autoConfirmBtcReceipt
+          && !this.btcReceiptSent.has(tradeId)) {
+        effective = TradeState.BTC_RELEASED;
+      }
+      if (effective) this._emitTrade(tradeId, effective);
+      if (effective === TradeState.BTC_RELEASED && this.autoConfirmBtcReceipt) {
         this.confirmBtcReceived(tradeId).catch(() => { /* surfaced via state stream */ });
       }
     }

@@ -34,12 +34,12 @@
           <span class="backend-dot" aria-hidden="true"></span>
           <span id="backendLabel">connecting…</span>
         </div>
-        <div id="stepIndicator" class="text-[13px] font-medium text-ink2 tabular-nums">Step 1 of 6</div>
+        <div id="stepIndicator" class="text-[13px] font-medium text-ink2 tabular-nums">Step 1 of 5</div>
       </div>
     </div>
     <!-- Progress strip -->
     <div class="h-[3px] w-full bg-bg">
-      <div id="progressBar" class="h-full bg-gradient-to-r from-indigo to-violet transition-[width] duration-500 ease-out" style="width: 16.66%"></div>
+      <div id="progressBar" class="h-full bg-gradient-to-r from-indigo to-violet transition-[width] duration-500 ease-out" style="width: 20%"></div>
     </div>
   </header>
 
@@ -77,7 +77,7 @@
 
           <div class="relative flex flex-col w-full max-w-sm gap-5 pt-2">
             <button class="btn-primary" data-action="next">
-              Continue with bank
+              Browse offers
               <span class="material-symbols-outlined text-[18px]">arrow_forward</span>
             </button>
             <div class="flex flex-wrap items-center justify-center gap-2">
@@ -105,163 +105,140 @@
       </section>
 
       <!-- ============================================ -->
-      <!-- STEP 2 — Choose bank (demo fiction)           -->
+      <!-- STEP 2 — Offer book (real: adapter.listOffers) -->
       <!-- ============================================ -->
       <section data-step="2" class="step">
         <div class="flex flex-col gap-6">
           <div class="flex flex-col gap-2">
-            <h1 class="text-[28px] sm:text-[32px] leading-tight tracking-[-0.02em] font-semibold">Choose your bank</h1>
-            <p class="text-[15px] text-ink2">Select your primary institution to securely link your account.</p>
+            <h1 class="text-[28px] sm:text-[32px] leading-tight tracking-[-0.02em] font-semibold">Choose an offer</h1>
+            <p class="text-[15px] text-ink2">
+              Open sell offers from the P2P network. You trade directly with the seller — CryptoBridge
+              never holds your euros or your bitcoin, and never matches or brokers these offers.
+            </p>
           </div>
 
-          <label class="relative block">
-            <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-ink2 text-[20px]">search</span>
-            <input id="bankSearch" type="search" placeholder="Search 1,400+ supported banks" autocomplete="off"
-              class="w-full h-12 pl-12 pr-4 bg-surface border border-line rounded-xl2 text-[15px] placeholder:text-muted focus:outline-none focus:border-indigo focus:shadow-ring transition" />
-          </label>
-
-          <div id="bankGrid" class="grid grid-cols-2 md:grid-cols-3 gap-3">
-            <!-- bank tiles injected by app.js -->
+          <div id="offerLoading" class="flex items-center gap-3 py-10 justify-center text-[14px] text-ink2">
+            <span class="spinner spinner--ink"></span> Loading offers…
           </div>
 
-          <div id="bankEmpty" class="hidden flex-col items-center gap-2 py-10 text-center">
+          <div id="offerList" class="flex-col gap-3 hidden">
+            <!-- offer cards injected by app.js -->
+          </div>
+
+          <div id="offerEmpty" class="hidden flex-col items-center gap-2 py-10 text-center">
             <span class="material-symbols-outlined text-[32px] text-muted">search_off</span>
-            <p class="text-[14px] text-ink2">No matching bank in the demo set.</p>
-            <p class="text-[13px] text-muted">The full product would search 1,400+ PSD2 institutions.</p>
+            <p class="text-[14px] text-ink2">No open EUR offers right now.</p>
+            <p class="text-[13px] text-muted">The offer book is the network's, not ours — try again shortly.</p>
+          </div>
+
+          <div id="offerError" class="hidden flex-col items-center gap-2 py-10 text-center">
+            <span class="material-symbols-outlined text-[32px] err-text">wifi_off</span>
+            <p class="text-[14px] text-ink2">Could not reach the trading backend.</p>
+            <p id="offerErrorMsg" class="text-[13px] text-muted font-mono"></p>
           </div>
         </div>
 
         <!-- Sticky bottom CTA -->
         <div class="fixed inset-x-0 bottom-0 z-40 bg-surface/90 backdrop-blur-md border-t border-line">
           <div class="max-w-3xl mx-auto px-4 sm:px-6 py-3 flex flex-col items-center gap-2">
-            <button id="connectBankBtn" class="btn-primary w-full max-w-md is-disabled" disabled data-action="next">
-              Connect via PSD2
+            <button id="chooseOfferBtn" class="btn-primary w-full max-w-md is-disabled" disabled data-action="next">
+              Continue
             </button>
             <div class="flex items-center gap-1.5 text-[13px] text-ink2">
-              <span class="material-symbols-outlined text-[16px]">lock</span>
-              You'll be redirected to your bank's secure login
+              <span class="material-symbols-outlined text-[16px]">groups</span>
+              Prices are set by sellers, not by us
             </div>
           </div>
         </div>
       </section>
 
       <!-- ============================================ -->
-      <!-- STEP 3 — Your accounts (demo fiction)         -->
+      <!-- STEP 3 — Amount &amp; destination              -->
       <!-- ============================================ -->
       <section data-step="3" class="step">
         <div class="flex flex-col gap-6">
           <div class="flex flex-col gap-2">
-            <h1 class="text-[28px] sm:text-[32px] leading-tight tracking-[-0.02em] font-semibold">
-              Your accounts at <span id="bankNameLabel">your bank</span>
-            </h1>
-            <p class="text-[15px] text-ink2">Select the account you wish to connect to CryptoBridge.</p>
+            <h1 class="text-[28px] sm:text-[32px] leading-tight tracking-[-0.02em] font-semibold">Amount &amp; destination</h1>
+            <p class="text-[15px] text-ink2">How much to buy, and the wallet the bitcoin should go to.</p>
           </div>
 
-          <div class="flex flex-col gap-3">
-            <button class="account-card group" data-account="1">
-              <div class="flex justify-between items-start w-full gap-4">
-                <div class="flex flex-col items-start gap-1">
-                  <span class="text-[13px] text-ink2">Checking</span>
-                  <span class="text-[28px] font-semibold tabular-nums" data-balance="1">€ 2,547.35</span>
-                  <span class="text-[12px] font-mono text-muted mt-1">DE89 1001 1001 1234 5678 90</span>
-                </div>
-                <div class="flex flex-col items-end gap-3">
-                  <svg class="w-16 h-8 stroke-ink fill-none opacity-50 group-hover:opacity-100 transition" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 100 30">
-                    <path d="M0,20 L10,18 L20,22 L30,15 L40,19 L50,10 L60,15 L70,5 L80,12 L90,2 L100,8"></path>
-                  </svg>
-                  <span class="pill-select">Select <span class="material-symbols-outlined text-[14px]">arrow_forward</span></span>
-                </div>
-              </div>
-            </button>
+          <div id="offerChosen" class="offer-chosen"></div>
 
-            <button class="account-card group" data-account="2">
-              <div class="flex justify-between items-start w-full gap-4">
-                <div class="flex flex-col items-start gap-1">
-                  <span class="text-[13px] text-ink2">Savings</span>
-                  <span class="text-[28px] font-semibold tabular-nums" data-balance="2">€ 15,832.42</span>
-                  <span class="text-[12px] font-mono text-muted mt-1">DE89 1001 1001 9876 5432 10</span>
-                </div>
-                <div class="flex flex-col items-end gap-3">
-                  <svg class="w-16 h-8 stroke-ink fill-none opacity-50 group-hover:opacity-100 transition" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 100 30">
-                    <path d="M0,25 L10,24 L20,20 L30,18 L40,15 L50,12 L60,8 L70,10 L80,5 L90,3 L100,2"></path>
-                  </svg>
-                  <span class="pill-select">Select <span class="material-symbols-outlined text-[14px]">arrow_forward</span></span>
-                </div>
-              </div>
-            </button>
+          <div class="flex flex-col gap-2">
+            <label for="amountInput" class="text-[13px] font-medium text-ink2">Amount to spend</label>
+            <div class="relative">
+              <span class="absolute left-4 top-1/2 -translate-y-1/2 text-ink2 text-[18px]">€</span>
+              <input id="amountInput" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00"
+                class="w-full h-14 pl-10 pr-4 bg-surface border border-line rounded-xl2 text-[20px] tabular-nums placeholder:text-muted focus:outline-none focus:border-indigo focus:shadow-ring transition" />
+            </div>
+            <p id="amountHint" class="text-[13px] text-muted"></p>
+            <p id="amountError" class="hidden text-[13px] err-text"></p>
+          </div>
 
-            <button class="account-card group" data-account="3">
-              <div class="flex justify-between items-start w-full gap-4">
-                <div class="flex flex-col items-start gap-1">
-                  <span class="text-[13px] text-ink2">Investment</span>
-                  <span class="text-[28px] font-semibold tabular-nums" data-balance="3">€ 8,721.90</span>
-                  <span class="text-[12px] font-mono text-muted mt-1">DE89 1001 1001 2468 1357 90</span>
-                </div>
-                <div class="flex flex-col items-end gap-3">
-                  <svg class="w-16 h-8 stroke-ink fill-none opacity-50 group-hover:opacity-100 transition" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 100 30">
-                    <path d="M0,15 L10,25 L20,20 L30,22 L40,10 L50,15 L60,5 L70,12 L80,2 L90,8 L100,0"></path>
-                  </svg>
-                  <span class="pill-select">Select <span class="material-symbols-outlined text-[14px]">arrow_forward</span></span>
-                </div>
-              </div>
+          <div class="flex flex-col gap-2">
+            <label for="addrInput" class="text-[13px] font-medium text-ink2">Your bitcoin receive address</label>
+            <input id="addrInput" type="text" spellcheck="false" autocomplete="off" autocapitalize="none"
+              placeholder="bc1…"
+              class="w-full h-14 px-4 bg-surface border border-line rounded-xl2 text-[14px] font-mono placeholder:text-muted focus:outline-none focus:border-indigo focus:shadow-ring transition" />
+            <p id="addrHint" class="text-[13px] text-muted">
+              The seller sends the bitcoin straight here. Paste an address from a wallet you control.
+            </p>
+            <p id="addrError" class="hidden text-[13px] err-text"></p>
+          </div>
+
+          <div class="custody-note">
+            <span class="material-symbols-outlined text-[18px]">key_off</span>
+            <p>
+              <strong>We never hold your keys.</strong> CryptoBridge has no wallet of its own — it cannot
+              receive, hold or move your bitcoin. Check the address carefully: a payment to the wrong
+              address cannot be reversed by us or by anyone.
+            </p>
+          </div>
+        </div>
+
+        <!-- Sticky bottom CTA -->
+        <div class="fixed inset-x-0 bottom-0 z-40 bg-surface/90 backdrop-blur-md border-t border-line">
+          <div class="max-w-3xl mx-auto px-4 sm:px-6 py-3 flex flex-col items-center gap-2">
+            <button id="amountNextBtn" class="btn-primary w-full max-w-md is-disabled" disabled data-action="next">
+              Continue
             </button>
+            <div id="amountSummary" class="text-[13px] text-ink2 tabular-nums">&nbsp;</div>
           </div>
         </div>
       </section>
 
       <!-- ============================================ -->
-      <!-- STEP 4 — Bridge                               -->
+      <!-- STEP 4 — Review &amp; take the offer           -->
       <!-- ============================================ -->
       <section data-step="4" class="step">
         <div class="flex flex-col gap-2 mb-6 text-center">
-          <h1 class="text-[28px] sm:text-[32px] leading-tight tracking-[-0.02em] font-semibold">Bridge your balance</h1>
-          <p class="text-[15px] text-ink2">Slide to transfer euros into your self-custodial crypto balance.</p>
+          <h1 class="text-[28px] sm:text-[32px] leading-tight tracking-[-0.02em] font-semibold">Review your trade</h1>
+          <p class="text-[15px] text-ink2">Nothing moves until you confirm. You pay the seller directly by SEPA transfer.</p>
         </div>
 
         <div class="relative">
-          <!-- Bank card (top) -->
+          <!-- You pay (top) -->
           <div class="bg-surface border border-line rounded-t-xl2 p-6 shadow-card relative z-10">
             <div class="flex justify-between items-center">
-              <span class="text-[11px] uppercase tracking-wider text-ink2 font-medium">Bank balance</span>
+              <span class="text-[11px] uppercase tracking-wider text-ink2 font-medium">You pay by SEPA transfer</span>
               <span class="material-symbols-outlined text-muted">account_balance</span>
             </div>
-            <div class="mt-2 text-[32px] font-semibold tracking-tight tabular-nums" id="bankAmount">€ 5,000.00</div>
+            <div class="mt-2 text-[32px] font-semibold tracking-tight tabular-nums" id="bankAmount">€ 0,00</div>
             <div class="w-full h-2 bg-bg rounded-full overflow-hidden mt-3">
               <div id="bankFill" class="h-full bg-ink rounded-full transition-[width] duration-150" style="width:100%"></div>
-            </div>
-          </div>
-
-          <!-- Slider strip (middle) -->
-          <div class="relative bg-surface border-x border-line px-6 py-5 z-20 shadow-[0_4px_8px_-2px_rgba(11,18,32,0.06)]">
-            <div class="relative h-6 flex items-center">
-              <div class="absolute inset-x-0 h-1.5 bg-bg rounded-full">
-                <div id="sliderFill" class="h-full rounded-full bg-gradient-to-r from-indigo to-violet" style="width:0%"></div>
-              </div>
-              <input id="bridgeSlider" type="range" min="0" max="100" value="0"
-                class="absolute inset-0 w-full h-full opacity-0 z-30 cursor-pointer" />
-              <div id="sliderThumb" class="absolute h-6 w-6 -ml-3 rounded-full bg-white border border-line shadow-card grid place-items-center pointer-events-none" style="left:0%">
-                <span class="h-2 w-2 rounded-full bg-gradient-to-br from-indigo to-violet"></span>
-              </div>
-            </div>
-            <div class="flex justify-between text-[11px] text-muted mt-3 tabular-nums px-0.5">
-              <span data-tick="0">0%</span>
-              <span data-tick="25">25%</span>
-              <span data-tick="50">50%</span>
-              <span data-tick="75">75%</span>
-              <span data-tick="100">100%</span>
             </div>
           </div>
 
           <!-- Particle canvas overlay (between cards) -->
           <canvas id="bridgeCanvas" class="absolute inset-0 w-full h-full pointer-events-none z-[15]"></canvas>
 
-          <!-- Crypto card (bottom) -->
+          <!-- You receive (bottom) -->
           <div class="bg-dark text-white border-x border-b border-line rounded-b-xl2 p-6 relative z-10 overflow-hidden">
             <div class="flex justify-between items-center">
-              <span class="text-[11px] uppercase tracking-wider text-white/60 font-medium">Crypto balance</span>
-              <span class="material-symbols-outlined text-mint">data_exploration</span>
+              <span class="text-[11px] uppercase tracking-wider text-white/60 font-medium">You receive, to your own wallet</span>
+              <span class="material-symbols-outlined text-mint">currency_bitcoin</span>
             </div>
-            <div class="mt-2 text-[32px] font-semibold tracking-tight tabular-nums text-mint" id="cryptoAmount">€ 0,00</div>
+            <div class="mt-2 text-[32px] font-semibold tracking-tight tabular-nums text-mint" id="cryptoAmount">≈ 0.00000000 BTC</div>
             <div class="w-full h-2 bg-dark3 rounded-full overflow-hidden mt-3">
               <div id="cryptoFill" class="h-full bg-mint rounded-full transition-[width] duration-150" style="width:0%"></div>
             </div>
@@ -270,15 +247,14 @@
           </div>
         </div>
 
+        <dl id="reviewRows" class="review-rows"></dl>
+
         <div class="flex flex-col items-center gap-3 mt-6">
-          <p class="text-[13px] text-ink2 bg-surface border border-line rounded-full px-4 py-1.5 shadow-card">
-            You will bridge <strong id="bridgeAmountText" class="text-ink font-semibold tabular-nums">€ 0,00</strong>
-          </p>
-          <button id="confirmBridgeBtn" class="btn-primary w-full max-w-md is-disabled" disabled>
-            Confirm bridge
+          <button id="confirmBridgeBtn" class="btn-primary w-full max-w-md">
+            Take this offer
             <span class="material-symbols-outlined text-[18px]">arrow_forward</span>
           </button>
-          <p class="text-[12px] text-muted">P2P trade through the connected backend · fiat leg is a SEPA transfer</p>
+          <p class="text-[12px] text-muted">Taking an offer starts a P2P trade · the fiat leg is a SEPA transfer you make yourself</p>
         </div>
       </section>
 
@@ -288,8 +264,8 @@
       <section data-step="5" class="step">
         <div class="flex flex-col gap-8">
           <div>
-            <h1 class="text-[28px] sm:text-[32px] leading-tight tracking-[-0.02em] font-semibold">Your portfolio</h1>
-            <p class="text-[15px] text-ink2 mt-1">Bridge transaction complete. Funds are ready.</p>
+            <h1 class="text-[28px] sm:text-[32px] leading-tight tracking-[-0.02em] font-semibold">Trade complete</h1>
+            <p class="text-[15px] text-ink2 mt-1">The seller released the bitcoin to the address you gave.</p>
           </div>
 
           <!-- Hero crypto card -->
@@ -297,16 +273,15 @@
             <div class="absolute -top-10 -right-10 w-48 h-48 bg-mint/10 rounded-full blur-3xl"></div>
             <div class="flex justify-between items-start z-10 relative">
               <div class="flex flex-col gap-1">
-                <span class="text-[13px] text-white/60">Bridged balance</span>
+                <span class="text-[13px] text-white/60">You bought</span>
                 <div class="flex items-baseline gap-2">
-                  <h2 class="text-[32px] font-semibold tracking-tight tabular-nums text-white" id="portfolioAmount">€ 0,00</h2>
-                  <span class="text-[14px] text-mint">+2.4%</span>
+                  <h2 class="text-[32px] font-semibold tracking-tight tabular-nums text-white" id="portfolioSats">≈ 0.00000000 BTC</h2>
                 </div>
-                <span id="portfolioSats" class="text-[13px] text-white/50 tabular-nums"></span>
+                <span id="portfolioAmount" class="text-[13px] text-white/50 tabular-nums">for € 0,00</span>
               </div>
               <div class="flex items-center gap-1.5 bg-mint/10 px-3 py-1 rounded-full border border-mint/30">
-                <span class="material-symbols-outlined text-mint text-[16px]" style="font-variation-settings: 'FILL' 1;">bolt</span>
-                <span class="text-[12px] font-medium text-mint">Bridged</span>
+                <span class="material-symbols-outlined text-mint text-[16px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+                <span class="text-[12px] font-medium text-mint">Settled</span>
               </div>
             </div>
             <div class="flex items-center gap-8 mt-5 pt-4 border-t border-dark3 relative z-10">
@@ -331,186 +306,29 @@
             </div>
           </section>
 
-          <!-- Holdings (appears once you buy art or open positions) -->
-          <section id="holdingsSection" class="hidden flex-col gap-3">
-            <h3 class="text-[20px] font-semibold tracking-[-0.01em]">Your assets</h3>
-            <div id="holdingsList" class="flex flex-col gap-2"></div>
+          <!-- Where the coins went -->
+          <section class="flex flex-col gap-3">
+            <h3 class="text-[20px] font-semibold tracking-[-0.01em]">Where it went</h3>
+            <dl id="destinationRows" class="review-rows"></dl>
           </section>
 
-          <!-- Explore what's next -->
-          <section class="flex flex-col gap-3">
-            <h3 class="text-[20px] font-semibold tracking-[-0.01em]">Explore what's next</h3>
-            <div class="flex flex-col gap-2">
-              <button class="explore-card" data-explore="assets">
-                <div class="flex items-center gap-4">
-                  <div class="explore-icon"><span class="material-symbols-outlined">search</span></div>
-                  <div class="flex flex-col text-left">
-                    <span class="font-semibold">Discover assets</span>
-                    <span class="text-[13px] text-ink2">Find top performing tokens</span>
-                  </div>
-                </div>
-                <span class="material-symbols-outlined text-ink2">chevron_right</span>
-              </button>
-              <button class="explore-card" data-explore="savings">
-                <div class="flex items-center gap-4">
-                  <div class="explore-icon"><span class="material-symbols-outlined">savings</span></div>
-                  <div class="flex flex-col text-left">
-                    <span class="font-semibold">Earn yield</span>
-                    <span class="text-[13px] text-ink2">Stake assets for rewards</span>
-                  </div>
-                </div>
-                <span class="material-symbols-outlined text-ink2">chevron_right</span>
-              </button>
-              <button class="explore-card" data-explore="swap">
-                <div class="flex items-center gap-4">
-                  <div class="explore-icon"><span class="material-symbols-outlined">swap_calls</span></div>
-                  <div class="flex flex-col text-left">
-                    <span class="font-semibold">Swap tokens</span>
-                    <span class="text-[13px] text-ink2">Trade instantly on L2</span>
-                  </div>
-                </div>
-                <span class="material-symbols-outlined text-ink2">chevron_right</span>
-              </button>
-            </div>
-          </section>
+          <div class="custody-note">
+            <span class="material-symbols-outlined text-[18px]">key_off</span>
+            <p>
+              <strong>CryptoBridge does not track your balance.</strong> The bitcoin is in your own
+              wallet, not with us — we never had custody of it and cannot see, move or freeze it.
+              Confirm the arrival in your wallet, and verify the transaction on a block explorer
+              of your choosing.
+            </p>
+          </div>
 
-          <!-- Connected funding sources -->
-          <section class="flex flex-col gap-3">
-            <h3 class="text-[20px] font-semibold tracking-[-0.01em]">Connected funding sources</h3>
-            <div id="connectedAccounts" class="flex flex-col gap-2">
-              <!-- populated by app.js -->
-            </div>
-          </section>
+          <button id="newTradeBtn" class="btn-secondary w-full max-w-md self-center">
+            <span class="material-symbols-outlined text-[18px]">refresh</span>
+            Start another trade
+          </button>
         </div>
       </section>
 
-      <!-- ============================================ -->
-      <!-- STEP 6 — Explore                              -->
-      <!-- ============================================ -->
-      <section data-step="6" class="step">
-        <div class="flex flex-col gap-6">
-          <div class="flex items-center justify-between gap-3 flex-wrap">
-            <h1 class="text-[28px] sm:text-[32px] leading-tight tracking-[-0.02em] font-semibold">Explore ecosystem</h1>
-            <div id="walletPill" class="wallet-pill" title="Bridged, self-custodied balance">
-              <span class="material-symbols-outlined text-[16px] text-mint">account_balance_wallet</span>
-              <span id="walletBalance" class="tabular-nums">€ 0,00</span>
-            </div>
-          </div>
-
-          <div class="inline-flex p-1 bg-surface border border-line rounded-xl2 max-w-md">
-            <button class="tab-btn active" data-tab="assets">Digital Assets</button>
-            <button class="tab-btn" data-tab="savings">Savings</button>
-            <button class="tab-btn" data-tab="swap">Swap</button>
-          </div>
-
-          <!-- Tab: Assets -->
-          <div data-tab-panel="assets" class="tab-panel">
-            <div class="flex justify-between items-end mb-4">
-              <div>
-                <h2 class="text-[22px] font-semibold tracking-[-0.01em]">Curated collections</h2>
-                <p class="text-[14px] text-ink2 mt-0.5">Discover premium digital art and collectibles.</p>
-              </div>
-              <button class="text-[13px] font-medium flex items-center gap-1 hover:opacity-80">View all <span class="material-symbols-outlined text-[16px]">arrow_forward</span></button>
-            </div>
-            <div id="artGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              <!-- art cards injected by app.js -->
-            </div>
-          </div>
-
-          <!-- Tab: Savings -->
-          <div data-tab-panel="savings" class="tab-panel hidden">
-            <div class="mb-4">
-              <h2 class="text-[22px] font-semibold tracking-[-0.01em]">Yield matrix</h2>
-              <p class="text-[14px] text-ink2 mt-0.5">
-                <span id="savingsCount" class="font-semibold tabular-nums text-ink">47</span> saving options · adjust risk to view APY projections.
-              </p>
-            </div>
-
-            <div class="card p-5 flex flex-col gap-6">
-              <div class="flex flex-col gap-3">
-                <div class="flex justify-between text-[12px] font-medium">
-                  <span class="text-ink2">Conservative</span>
-                  <span id="riskLabel" class="text-ink">Balanced (Level 3)</span>
-                  <span class="text-ink2">Aggressive</span>
-                </div>
-                <div class="relative h-2 bg-bg rounded-full">
-                  <div id="riskFill" class="absolute left-0 top-0 h-full rounded-full bg-gradient-to-r from-indigo to-violet" style="width:50%"></div>
-                  <input id="riskSlider" type="range" min="1" max="5" value="3" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-                </div>
-                <div class="flex justify-between text-[11px] text-ink2 tabular-nums">
-                  <span>1.5%</span><span>2.8%</span><span>4.2%</span><span>6.5%</span><span>9.8%</span>
-                </div>
-              </div>
-
-              <div id="yieldProduct" class="bg-bg rounded-xl2 p-4 border border-line">
-                <div class="flex justify-between items-start mb-2">
-                  <div class="flex items-center gap-2">
-                    <div class="h-9 w-9 rounded-lg bg-surface border border-line grid place-items-center">
-                      <span class="material-symbols-outlined text-[18px]">account_balance</span>
-                    </div>
-                    <div>
-                      <h4 class="font-semibold" id="productTitle">Balanced Yield Strategy</h4>
-                      <span class="text-[12px] text-ink2" id="productSub">Medium risk · 30d lock</span>
-                    </div>
-                  </div>
-                  <div class="text-right">
-                    <div class="text-[20px] font-semibold text-mint tabular-nums" id="productApy">4.2%</div>
-                    <div class="text-[10px] uppercase tracking-wider text-ink2">Est. APY</div>
-                  </div>
-                </div>
-                <button id="investBtn" class="btn-secondary w-full mt-3">Review term sheet &amp; invest</button>
-              </div>
-            </div>
-
-            <div id="yieldPositions" class="hidden mt-4 flex-col gap-2">
-              <h3 class="text-[16px] font-semibold tracking-[-0.01em]">Your active positions</h3>
-              <div id="yieldPositionsList" class="flex flex-col gap-2"></div>
-            </div>
-          </div>
-
-          <!-- Tab: Swap -->
-          <div data-tab-panel="swap" class="tab-panel hidden">
-            <div class="mb-4">
-              <h2 class="text-[22px] font-semibold tracking-[-0.01em]">Instant swap</h2>
-              <p class="text-[14px] text-ink2 mt-0.5">Zero slippage on major pairs.</p>
-            </div>
-            <div class="card p-5 relative max-w-md">
-              <div class="bg-bg rounded-xl2 p-4 border border-transparent focus-within:border-indigo focus-within:shadow-ring transition">
-                <label for="swapPay" class="text-[12px] text-ink2 block mb-1">You pay</label>
-                <div class="flex justify-between items-center gap-3">
-                  <input id="swapPay" type="text" inputmode="decimal" value="1.5" class="bg-transparent border-none text-[26px] font-semibold w-1/2 outline-none tabular-nums" />
-                  <button class="token-btn">
-                    <span class="h-6 w-6 rounded-full bg-ink text-white text-[10px] font-bold grid place-items-center">ETH</span>
-                    <span>ETH</span><span class="material-symbols-outlined text-[16px]">expand_more</span>
-                  </button>
-                </div>
-                <div id="swapPayEur" class="text-[12px] text-ink2 mt-1 tabular-nums">€ 4.821,30</div>
-              </div>
-
-              <div class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-surface border border-line rounded-full p-1 z-10 shadow-card">
-                <div class="bg-bg rounded-full p-1.5 text-ink2">
-                  <span class="material-symbols-outlined text-[18px]">arrow_downward</span>
-                </div>
-              </div>
-
-              <div class="bg-bg rounded-xl2 p-4 border border-transparent mt-2 focus-within:border-indigo focus-within:shadow-ring transition">
-                <label for="swapReceive" class="text-[12px] text-ink2 block mb-1">You receive</label>
-                <div class="flex justify-between items-center gap-3">
-                  <input id="swapReceive" type="text" value="4815.50" readonly class="bg-transparent border-none text-[26px] font-semibold w-1/2 outline-none tabular-nums" />
-                  <button class="token-btn token-btn--primary">
-                    <span class="h-6 w-6 rounded-full bg-white text-ink text-[10px] font-bold grid place-items-center">U</span>
-                    <span>USDC</span><span class="material-symbols-outlined text-[16px]">expand_more</span>
-                  </button>
-                </div>
-                <div id="swapReceiveEur" class="text-[12px] text-ink2 mt-1 tabular-nums">€ 4.815,50 (−0.12%)</div>
-              </div>
-
-              <button class="btn-primary w-full mt-5">Confirm swap</button>
-            </div>
-          </div>
-
-        </div>
-      </section>
 
     </div>
 
@@ -524,23 +342,67 @@
     </footer>
   </main>
 
-  <!-- Art purchase modal -->
-  <div id="artModal" class="modal" role="dialog" aria-modal="true" aria-hidden="true">
-    <div class="modal-card">
-      <button class="modal-close" data-close aria-label="Close">
-        <span class="material-symbols-outlined text-[20px]">close</span>
-      </button>
-      <div id="artModalBody"></div>
-    </div>
-  </div>
+  <!-- Payment screen — the fiat (SEPA) leg -->
+  <div id="paymentOverlay" class="modal" role="dialog" aria-modal="true" aria-labelledby="payTitle" aria-hidden="true">
+    <div class="modal-card pay-card">
+      <div class="pay-head">
+        <span class="pay-badge material-symbols-outlined" aria-hidden="true">account_balance</span>
+        <div>
+          <h2 id="payTitle" class="text-[19px] font-semibold tracking-tight leading-tight">Pay the seller by SEPA</h2>
+          <p class="text-[13px] text-ink2 mt-0.5">From your own bank — CryptoBridge never touches the money.</p>
+        </div>
+      </div>
 
-  <!-- Yield invest modal -->
-  <div id="investModal" class="modal" role="dialog" aria-modal="true" aria-hidden="true">
-    <div class="modal-card">
-      <button class="modal-close" data-close aria-label="Close">
-        <span class="material-symbols-outlined text-[20px]">close</span>
-      </button>
-      <div id="investModalBody"></div>
+      <!-- Phase A: show IBAN + GiroCode, wait for the user to pay -->
+      <div id="payPhasePay">
+        <div class="pay-grid">
+          <div class="pay-row"><span>Amount</span><strong id="payAmount" class="tabular-nums">€ 0,00</strong></div>
+          <div class="pay-row"><span>Account holder</span><strong id="payName">—</strong></div>
+          <div class="pay-row pay-row--wide"><span>IBAN</span><strong id="payIban" class="tabular-nums">—</strong></div>
+          <div class="pay-row" id="payBicRow" hidden><span>BIC</span><strong id="payBic">—</strong></div>
+          <div class="pay-row pay-row--wide" id="payRefRow" hidden><span>Reference</span><strong id="payRef">—</strong></div>
+        </div>
+
+        <div class="pay-qr-wrap">
+          <div id="payQr" class="pay-qr" role="img" aria-label="GiroCode — scan with your banking app"></div>
+          <p class="pay-qr-cap">Scan the GiroCode with your banking app</p>
+        </div>
+
+        <details id="payRawWrap" class="pay-raw">
+          <summary>Show the seller's exact message</summary>
+          <pre id="payRaw"></pre>
+          <p>These bank details are typed by the seller. The fields above are our
+             reading of this text — compare them if anything looks unusual.</p>
+        </details>
+
+        <div class="pay-warn" role="note">
+          <span class="material-symbols-outlined text-[18px]" aria-hidden="true">verified_user</span>
+          <p>Check the <strong>account holder name</strong> against your bank's Verification-of-Payee prompt before you send.</p>
+        </div>
+        <p class="pay-trust">Bisq Easy trades are protected by the seller's reputation and mediation — not on-chain multisig. Only bridge amounts you're comfortable with.</p>
+
+        <button id="payConfirmSent" class="btn-primary w-full mt-1">I've sent the SEPA transfer</button>
+        <p class="pay-fine">Confirm only after your bank shows the transfer as sent.</p>
+      </div>
+
+      <!-- Phase B: waiting for the seller / release -->
+      <div id="payPhaseWait" hidden>
+        <div class="pay-wait">
+          <span class="spinner spinner--ink" aria-hidden="true"></span>
+          <p id="payWaitMsg" class="text-[15px] font-medium">Waiting for the seller to confirm receipt…</p>
+          <p class="text-[13px] text-ink2">Your bitcoin is released once the seller confirms the euros arrived. This can take a few minutes.</p>
+        </div>
+      </div>
+
+      <!-- Phase C: seller released — confirm you received it (non-custodial backends) -->
+      <div id="payPhaseReceive" hidden>
+        <div class="pay-release">
+          <span class="material-symbols-outlined text-[40px]" aria-hidden="true">savings</span>
+          <p class="text-[15px] font-medium mt-2">The seller released your bitcoin</p>
+          <p class="text-[13px] text-ink2 mt-1">It's on its way to your wallet<br><code id="payAddr" class="pay-addr">—</code><br>Verify it arrives, then confirm to close the trade.</p>
+        </div>
+        <button id="payConfirmReceived" class="btn-primary w-full mt-1">I received the bitcoin</button>
+      </div>
     </div>
   </div>
 
@@ -551,8 +413,8 @@
       <div class="success-check">
         <span class="material-symbols-outlined text-[40px]">check</span>
       </div>
-      <p class="text-[18px] font-semibold mt-5">Bridge complete</p>
-      <p class="text-[14px] text-ink2 mt-1"><span id="successAmount" class="font-semibold text-ink tabular-nums">€ 0,00</span> is now self-custodied</p>
+      <p class="text-[18px] font-semibold mt-5">Trade complete</p>
+      <p class="text-[14px] text-ink2 mt-1"><span id="successAmount" class="font-semibold text-ink tabular-nums">0 BTC</span> sent to your wallet</p>
     </div>
   </div>
 

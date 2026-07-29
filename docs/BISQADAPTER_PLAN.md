@@ -29,13 +29,12 @@ address, we hold no keys. Notes from the build:
   `confirmBtcReceived()` (a bisq-only method; the mock auto-completes). The contract test flips the
   flag to run unattended. The payment-screen milestone must add that manual confirm step.
 - **Address safety.** `wallet.js` fully checksums bech32/bech32m receive addresses (BIP173/350) to
-  catch paste typos before real BTC is sent; legacy base58 gets a structural check.
-- **Two integration gaps remain (documented, not yet built):** (1) *pairing auth* — `_req` refuses
-  when a `pairingCode` is set (the spike ran unauthenticated on loopback; production needs Bisq's
-  pairing flow). (2) *CSP/transport* — talking to the node from the Tauri build needs the node's
-  origin added to the CSP in `src-tauri/tauri.conf.json`, or (cleaner) routing HTTP/WS through the
-  Rust shell over IPC so `connect-src` stays `'self'`. The plain-browser dev server has no CSP, so
-  `?backend=bisq` works there today.
+  catch paste typos before real BTC is sent. Legacy base58 originally got a structural check only;
+  the security audit replaced that with full base58check (finding 2).
+- **Both integration gaps that were open here are now closed.** *Transport*: HTTP/WS are routed
+  through the Rust shell over IPC, so `connect-src` stays `'self'`. *Pairing auth*: implemented and
+  live-verified against a node with `authorizationRequired=true` — see
+  [PAIRING_AUTH.md](PAIRING_AUTH.md).
 
 ## Goal
 
@@ -154,12 +153,41 @@ IBAN + QR generation identical across adapters.
   trade through the adapter and assert the mapped `TradeState` sequence. CI can build the bisq2
   headless apps with JDK 21 (no bitcoind/Tor) — see `spike/bisq2/README.md`.
 
+## Transport: how the adapter actually reaches the node (2026-07-24)
+
+The adapter no longer calls `fetch`/`WebSocket` itself — it goes through a transport seam
+(`src/adapters/transport.js`), because inside the packaged app it *cannot*: the CSP holds
+`connect-src` at `'self'`, so a webview socket to `127.0.0.1:8090` is blocked outright. This was
+a hard blocker; before it, the Bisq backend only worked when `src/` was served in a browser.
+
+Two implementations behind one interface — `request()` and `openSocket()`:
+
+- **WebTransport** — `fetch` + `WebSocket`. Browser dev server, the Node contract test.
+- **TauriTransport** — `invoke('bisq_http' | 'bisq_ws_open' | 'bisq_ws_send' | 'bisq_ws_close')`
+  plus a single `bisq-ws` event stream carrying every frame tagged with its socket id.
+
+The CSP was **not** widened; the shell owns the socket instead. All policy lives in
+`src-tauri/src/proxy.rs` (audit there, not in the JS): plaintext `http:`/`ws:` only, **literal
+loopback IPs only** — hostnames including `localhost` are refused so the proxy never resolves a
+name and DNS rebinding cannot walk it off-machine — paths confined to `/api/v1/…` and
+`/websocket`, no redirect following, no environment proxy, method allowlist, size caps, socket
+cap. Crucially there is **no TLS backend compiled in** (`default-features = false`), so the proxy
+cannot open an HTTPS connection at all; CI greps the dependency tree and fails if one appears.
+
+Residual risk, stated rather than hidden: any *port* on loopback is reachable, since a user may
+run their node anywhere. The path allowlist is what keeps that uninteresting.
+
+Verified: 8 allowlist unit tests + 6 live-transport tests (real servers on 127.0.0.1, including
+proof a 302 is returned rather than followed), 16 JS transport tests including the
+frame-before-id race, and both a live `live_bisq` proxy probe and the full buyer-side contract
+trade against a real Bisq node. Not yet exercised: the literal Tauri IPC bridge in a running
+window — that needs a GUI session plus a node, and is Tauri's own code either side of the seam.
+
 ## Auth / production posture (not needed for local dev, required before release)
 
-The spike disabled `authorizationRequired` on loopback. Production talks to the **user's own node**
-using Bisq's pairing flow (QR/pairing code, 5-min TTL → clientId/clientSecret/session) — the same
-model the Bisq mobile apps use. Add a pairing step to `init` gated behind a "remote/authenticated"
-config; keep loopback-dev unauthenticated for tests.
+**Done (2026-07-25).** The adapter pairs, holds credentials, renews sessions, and authenticates
+both REST and the WebSocket handshake. Full protocol, wire format and the two behaviours that had
+to be measured against a live node rather than assumed: [PAIRING_AUTH.md](PAIRING_AUTH.md).
 
 ## Bright-line check (keep true throughout)
 

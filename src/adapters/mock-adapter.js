@@ -20,7 +20,14 @@ const OFFER_BOOK = [
 ];
 
 // Demo seller bank details for the fiat leg (clearly fake IBAN).
-const SELLER = { name: 'CryptoBridge Demo Seller', iban: 'DE02 1203 0000 0000 2020 51' };
+// `raw` mirrors how a real Bisq Easy seller sends this — free text they typed —
+// so the UI exercises the same "show the seller's exact message" path here as
+// it does against a real node.
+const SELLER = {
+  name: 'CryptoBridge Demo Seller',
+  iban: 'DE02 1203 0000 0000 2020 51',
+  raw: 'CryptoBridge Demo Seller, IBAN DE02 1203 0000 0000 2020 51 (SEPA)',
+};
 
 const eurToSats = (eur) => Math.round((eur / RATE_EUR_PER_BTC) * 1e8);
 
@@ -125,7 +132,7 @@ export class MockAdapter extends OnrampAdapter {
       reference: trade.reference,
       amountEur: trade.fiatAmountEur,
     };
-    return { ...p, epcQrPayload: epcPayload({ ...p, amountEur: p.amountEur }) };
+    return { ...p, rawAccountData: SELLER.raw, epcQrPayload: epcPayload({ ...p, amountEur: p.amountEur }) };
   }
 
   async confirmFiatSent(tradeId) {

@@ -2,8 +2,10 @@
    in bhanneke/crypto-onramp: every asset ships with the app).
    Variable latin subsets fetched from Google Fonts; regenerate by re-downloading
    with a Chrome user agent. Material Symbols is subsetted to the icon names used
-   by the app (icon_names= query parameter) — add the new name there when you use
-   a new icon, or it will render as its ligature text. */
+   by the app: an icon that is not in the subset renders as its *ligature text*
+   (a button reading "GROUPS" rather than showing the glyph) and nothing errors,
+   so after adding an icon run `npm run build:icons`, which re-derives the list
+   from src/index.html and refetches the subset. */
 
 @font-face {
   font-family: 'Inter';

@@ -17,8 +17,7 @@ jobs:
       - name: Syntax check
         run: |
           node --check src/app.js
-          node --check src/adapters/onramp-adapter.js
-          node --check src/adapters/mock-adapter.js
+          for f in src/adapters/*.js src/vendor/qr.js; do node --check "$f"; done
       - name: HTML lint
         run: npx --yes htmlhint src/index.html
       - name: Adapter unit tests
@@ -39,4 +38,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - run: cargo check --manifest-path src-tauri/Cargo.toml
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      # Runs the loopback-proxy allowlist tests and the live-transport tests.
+      # These are the app's only hole in the CSP sandbox — they gate merges.
+      - name: Proxy tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+      # The proxy is meant to have no TLS backend at all: with only http:// and
+      # ws:// reachable, it cannot be turned into an exfiltration channel. Fail
+      # the build if a dependency ever pulls one in.
+      - name: Assert no TLS backend crept into the dependency tree
+        run: |
+          if cargo tree --manifest-path src-tauri/Cargo.toml -e normal \
+               | grep -iE 'rustls|native-tls|openssl|boring'; then
+            echo "::error::a TLS stack entered the tree; the loopback proxy must stay plaintext-only"
+            exit 1
+          fi
+          echo "no TLS backend present, as intended"

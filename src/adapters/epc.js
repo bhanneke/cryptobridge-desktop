@@ -10,19 +10,44 @@
  *  None of this moves money — it only *describes* the SEPA transfer the user
  *  makes from their own bank (bright line: no fiat handling). */
 
+/** Sanitise one EPC field.
+ *
+ *  SECURITY (audit finding 1): EPC fields are newline-delimited and readers key
+ *  on *line position*, so a newline inside a field silently rewrites the
+ *  payment. The receiver name is derived from free text the seller types, so a
+ *  hostile seller could push their own IBAN and amount into the lines a banking
+ *  app reads — the user would see the honest IBAN on screen and scan a QR that
+ *  pays someone else. Strip anything that can move a line boundary, and clamp
+ *  to the spec's field lengths. */
+function epcField(value, max) {
+  return String(value ?? '')
+    .replace(/[\r\n\u0085\u2028\u2029]+/g, ' ')  // every flavour of line break
+    .replace(/[\u0000-\u001F\u007F]/g, '')            // remaining control characters
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+}
+
 /** EPC069-12 (version 002) "BCD" payload. Line order is fixed by the spec:
  *  service tag, version, charset, identification, BIC, receiver name, IBAN,
  *  amount, purpose code, structured reference, unstructured remittance,
- *  beneficiary-to-originator info. */
+ *  beneficiary-to-originator info.
+ *
+ *  Always exactly 12 lines — see `epcField` for why that is a security
+ *  property and not just tidiness. */
 export function epcPayload({ receiverName, iban, amountEur, reference = '', bic = '' }) {
+  const amount = Number(amountEur);
+  if (!Number.isFinite(amount) || amount < 0 || amount > 999999999.99) {
+    throw new Error(`epcPayload: amountEur out of range: ${amountEur}`);
+  }
   return [
     'BCD', '002', '1', 'SCT',
-    bic,                                  // BIC — optional since v2
-    receiverName || '',
-    (iban || '').replace(/\s+/g, ''),
-    'EUR' + Number(amountEur).toFixed(2),
+    epcField(bic, 11),                    // BIC — optional since v2
+    epcField(receiverName, 70),
+    epcField(iban, 34).replace(/\s+/g, '').toUpperCase(),
+    'EUR' + amount.toFixed(2),
     '', '',                               // purpose, structured reference
-    reference,
+    epcField(reference, 140),
     '',
   ].join('\n');
 }
@@ -32,11 +57,29 @@ export function normaliseIban(iban) {
   return (iban || '').replace(/\s+/g, '').toUpperCase();
 }
 
-/** Very light IBAN sanity check (country + check digits + length 15..34).
- *  Not a mod-97 checksum — enough to reject obvious garbage before we show it. */
+/** ISO 7064 mod-97-10 remainder for an already-normalised IBAN. Valid == 1. */
+function ibanMod97(s) {
+  const rearranged = s.slice(4) + s.slice(0, 4);
+  let rem = 0;
+  for (const ch of rearranged) {
+    // Letters expand to their two-digit A=10 … Z=35 value.
+    const digits = ch >= '0' && ch <= '9' ? ch : String(ch.charCodeAt(0) - 55);
+    for (const d of digits) rem = (rem * 10 + Number(d)) % 97;
+  }
+  return rem;
+}
+
+/** IBAN check: structure, length, and the mod-97 checksum.
+ *
+ *  SECURITY (audit finding 4): this used to be structural only. The IBAN is
+ *  typed by hand by the seller and ends up in a QR the user scans, so the
+ *  checksum is what catches a transposed digit before someone's euros go to a
+ *  non-existent or unintended account. */
 export function looksLikeIban(iban) {
   const s = normaliseIban(iban);
-  return /^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(s) && s.length >= 15 && s.length <= 34;
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(s)) return false;
+  if (s.length < 15 || s.length > 34) return false;
+  return ibanMod97(s) === 1;
 }
 
 /** Pull structured bank details out of Bisq Easy's free-text account data.
@@ -63,8 +106,11 @@ export function parseSepaAccountData(raw) {
   // Holder name: text before the first comma is the common convention
   // ("Alice Spike, IBAN ..."). Fall back to the raw text with the IBAN / noise
   // tokens stripped.
+  // Whitespace is collapsed on both branches: the name is rendered in the UI
+  // and fed to epcPayload, and a seller-supplied newline has no business in
+  // either (see the epcField note — it is sanitised there too, belt and braces).
   let holderName = '';
-  const beforeComma = text.split(',')[0]?.trim();
+  const beforeComma = text.split(',')[0]?.replace(/\s+/g, ' ').trim();
   if (beforeComma && !/iban/i.test(beforeComma) && !looksLikeIban(beforeComma)) {
     holderName = beforeComma;
   } else {
