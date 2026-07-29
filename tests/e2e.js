@@ -57,7 +57,19 @@ await page.$eval('#bridgeSlider', (el) => {
 await page.waitForTimeout(200);
 await page.click('#confirmBridgeBtn');
 
-// Trade lifecycle runs (~2 s at demo pacing), then the overlay pops.
+// --- Payment screen (fiat leg) ------------------------------------------
+await page.waitForSelector('#paymentOverlay.show', { timeout: 15000 });
+ok(true, 'payment screen appears at the fiat leg');
+ok(!!(await page.$('#payQr svg')), 'GiroCode QR is rendered (self-contained SVG)');
+const ibanTxt = await page.textContent('#payIban');
+ok(/\d{4}/.test(ibanTxt), `payment screen shows the seller IBAN: "${ibanTxt.trim()}"`);
+const payAmt = await page.textContent('#payAmount');
+ok(/€/.test(payAmt), `payment screen shows the amount: "${payAmt.trim()}"`);
+await page.screenshot({ path: join(shots, 'payment.png') });
+await page.click('#payConfirmSent');
+ok(true, 'user confirms the SEPA transfer sent');
+
+// Trade lifecycle completes (~2 s at demo pacing), then the overlay pops.
 await page.waitForSelector('#bridgeSuccess.show', { timeout: 15000 });
 ok(true, 'trade completes and the success overlay appears');
 await page.waitForFunction(

@@ -544,6 +544,63 @@
     </div>
   </div>
 
+  <!-- Payment screen — the fiat (SEPA) leg -->
+  <div id="paymentOverlay" class="modal" role="dialog" aria-modal="true" aria-labelledby="payTitle" aria-hidden="true">
+    <div class="modal-card pay-card">
+      <div class="pay-head">
+        <span class="pay-badge material-symbols-outlined" aria-hidden="true">account_balance</span>
+        <div>
+          <h2 id="payTitle" class="text-[19px] font-semibold tracking-tight leading-tight">Pay the seller by SEPA</h2>
+          <p class="text-[13px] text-ink2 mt-0.5">From your own bank — CryptoBridge never touches the money.</p>
+        </div>
+      </div>
+
+      <!-- Phase A: show IBAN + GiroCode, wait for the user to pay -->
+      <div id="payPhasePay">
+        <div class="pay-grid">
+          <div class="pay-row"><span>Amount</span><strong id="payAmount" class="tabular-nums">€ 0,00</strong></div>
+          <div class="pay-row"><span>Account holder</span><strong id="payName">—</strong></div>
+          <div class="pay-row pay-row--wide"><span>IBAN</span><strong id="payIban" class="tabular-nums">—</strong></div>
+          <div class="pay-row" id="payBicRow" hidden><span>BIC</span><strong id="payBic">—</strong></div>
+          <div class="pay-row pay-row--wide" id="payRefRow" hidden><span>Reference</span><strong id="payRef">—</strong></div>
+        </div>
+
+        <div class="pay-qr-wrap">
+          <div id="payQr" class="pay-qr" role="img" aria-label="GiroCode — scan with your banking app"></div>
+          <p class="pay-qr-cap">Scan the GiroCode with your banking app</p>
+        </div>
+
+        <div class="pay-warn" role="note">
+          <span class="material-symbols-outlined text-[18px]" aria-hidden="true">verified_user</span>
+          <p>Check the <strong>account holder name</strong> against your bank's Verification-of-Payee prompt before you send.</p>
+        </div>
+        <p class="pay-trust">Bisq Easy trades are protected by the seller's reputation and mediation — not on-chain multisig. Only bridge amounts you're comfortable with.</p>
+
+        <button id="payConfirmSent" class="btn-primary w-full mt-1">I've sent the SEPA transfer</button>
+        <p class="pay-fine">Confirm only after your bank shows the transfer as sent.</p>
+      </div>
+
+      <!-- Phase B: waiting for the seller / release -->
+      <div id="payPhaseWait" hidden>
+        <div class="pay-wait">
+          <span class="spinner spinner--ink" aria-hidden="true"></span>
+          <p id="payWaitMsg" class="text-[15px] font-medium">Waiting for the seller to confirm receipt…</p>
+          <p class="text-[13px] text-ink2">Your bitcoin is released once the seller confirms the euros arrived. This can take a few minutes.</p>
+        </div>
+      </div>
+
+      <!-- Phase C: seller released — confirm you received it (non-custodial backends) -->
+      <div id="payPhaseReceive" hidden>
+        <div class="pay-release">
+          <span class="material-symbols-outlined text-[40px]" aria-hidden="true">savings</span>
+          <p class="text-[15px] font-medium mt-2">The seller released your bitcoin</p>
+          <p class="text-[13px] text-ink2 mt-1">It's on its way to your wallet<br><code id="payAddr" class="pay-addr">—</code><br>Verify it arrives, then confirm to close the trade.</p>
+        </div>
+        <button id="payConfirmReceived" class="btn-primary w-full mt-1">I received the bitcoin</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Bridge success overlay -->
   <div id="bridgeSuccess" class="bridge-success" role="status" aria-live="polite" aria-hidden="true">
     <div class="bridge-success-card">
