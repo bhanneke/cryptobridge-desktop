@@ -1,33 +1,56 @@
 /* CryptoBridge Desktop — UI layer.
-   6-step flow ported from bhanneke/crypto-onramp, now routed through an
-   OnrampAdapter: the bridge step runs a real trade lifecycle (offer → fiat
-   leg → BTC release) against the pluggable backend. MockAdapter today,
-   BisqAdapter next. Steps 2–3 (bank picker, accounts) and the explore
-   endgame (art, yield, swap) are demo fiction kept from the prototype. */
+
+   Five steps, and every one of them is real: pick an offer from the network's
+   own book, set the amount and the wallet address the coins go to, review,
+   pay the seller by SEPA, done. All of it runs through the OnrampAdapter —
+   MockAdapter by default, BisqAdapter against a user-run Bisq 2 node.
+
+   The prototype's demo fiction is gone rather than flag-gated: the PSD2 bank
+   picker, the invented account balances, and the art / yield / swap endgame.
+   A yield product with a risk slider and an APY projection is precisely what
+   the implementation plan's bright lines rule out (no yield, no advice), and
+   code that never ships cannot contradict them. The full demo still lives in
+   bhanneke/crypto-onramp if you want to show someone the vision.
+
+   One rule worth keeping when editing this file: offer text (maker handles,
+   payment-method names) arrives from a P2P network and is attacker-controlled.
+   It goes into the DOM as textContent, never as innerHTML. */
 
 import { TradeState } from './adapters/onramp-adapter.js';
 import { MockAdapter } from './adapters/mock-adapter.js';
 import { BisqAdapter } from './adapters/bisq-adapter.js';
-import { ExternalWallet } from './adapters/wallet.js';
+import { ExternalWallet, isValidBtcAddress } from './adapters/wallet.js';
 import { qrSvg } from './vendor/qr.js';
 
 // ---------------------------------------------------------------
+// State
+// ---------------------------------------------------------------
+const TOTAL_STEPS = 5;
+const state = {
+  step: 1,
+  offers: [],            // last offer book fetched from the adapter
+  selectedOffer: null,   // the offer the user picked (step 2)
+  amountEur: 0,          // what they will send by SEPA (step 3)
+  receiveAddress: '',    // their own BTC address, checksum-validated (step 3)
+  trade: null,           // the live trade, once taken (step 4)
+};
+
+// ---------------------------------------------------------------
 // Backend adapter — mock by default; opt into a real Bisq 2 node with
-//   ?backend=bisq&node=http://127.0.0.1:8090/api/v1&addr=<your BTC address>[&network=regtest]
-// External-wallet mode: `addr` is a receive address from your own wallet — we
-// hold no keys. NOTE: talking to a node from the Tauri build needs the node's
-// origin added to the CSP in src-tauri/tauri.conf.json (or routing via Rust
-// IPC); the plain-browser dev server has no CSP, so this works there today.
-// The full bisq trade UX (payment screen, manual BTC-receipt confirm) is the
-// next milestone — see docs/BISQADAPTER_PLAN.md.
+//   ?backend=bisq&node=http://127.0.0.1:8090/api/v1[&network=regtest]
+// or the same keys in localStorage as `cryptobridge.<key>`.
+//
+// External-wallet mode: the receive address comes from the user, typed in
+// step 3, and is handed to the wallet through an addressProvider — we hold no
+// keys and never generate an address of our own. Inside the packaged app the
+// node is reached over Tauri IPC (see adapters/transport.js), so the CSP stays
+// connect-src 'self'.
 // ---------------------------------------------------------------
 const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-/* Query params drive backend selection in browser dev (`?backend=bisq&node=…`).
- * The packaged app loads index.html with no query string, so the same keys are
- * also read from localStorage under `cryptobridge.<key>`. The mock stays the
- * default in both: a real backend is never selected implicitly. A proper
- * connect screen belongs with the offer-book work — this is the seam it writes to. */
+/* Query params drive backend selection in browser dev; the packaged app has no
+ * query string, so the same keys are also read from localStorage. The mock
+ * stays the default in both — a real backend is never selected implicitly. */
 function setting(q, key) {
   const fromQuery = q.get(key);
   if (fromQuery) return fromQuery;
@@ -43,7 +66,12 @@ function createAdapter() {
   if (setting(q, 'backend') === 'bisq') {
     try {
       const network = setting(q, 'network') || 'mainnet';
-      const wallet = new ExternalWallet({ address: setting(q, 'addr') || undefined, network });
+      // The wallet asks the UI for the address at the moment it needs one, so
+      // what the user typed in step 3 is what the seller is told to pay.
+      const wallet = new ExternalWallet({
+        addressProvider: () => state.receiveAddress,
+        network,
+      });
       return new BisqAdapter({
         restBaseUrl: setting(q, 'node') || undefined,
         wsUrl: setting(q, 'ws') || undefined,
@@ -58,77 +86,54 @@ function createAdapter() {
 }
 
 const adapter = createAdapter();
+let adapterReady = null;
 
 // ---------------------------------------------------------------
-// State
-// ---------------------------------------------------------------
-const TOTAL_STEPS = 6;
-const state = {
-  step: 1,
-  selectedBank: null,        // 'ing' | 'dkb' | ...
-  selectedBankName: '',
-  selectedAccount: null,     // 1 | 2 | 3
-  selectedBalance: 0,
-  bridgedAmount: 0,          // € value moved in the current bridge round
-  bankAmount: 0,             // € value remaining in bank (after slider)
-  cryptoBalance: 0,          // cumulative bridged € still spendable (UI mirror
-                             // of the adapter wallet; drift is rounding only)
-  owned: [],                 // artwork ids purchased
-  positions: [],             // { title, apy, sub, amount } yield positions
-};
-
-// ---------------------------------------------------------------
-// Market data (demo constants — no network)
-// ---------------------------------------------------------------
-const ETH_EUR = 3214.20;
-
-const ARTWORKS = [
-  { id: 'void',     artist: '0xGeometry',  title: 'Abstract Void #042',    floor: 2.4, vol: 142, art: 1, verified: true },
-  { id: 'chrome',   artist: 'Studio Meta', title: 'Liquid Chrome Genesis', floor: 1.8, vol: 89,  art: 2 },
-  { id: 'monolith', artist: 'Architexture', title: 'Monolith Sector 7',    floor: 4.1, vol: 310, art: 3 },
-];
-
-// ---------------------------------------------------------------
-// Bank catalogue (inline SVG wordmarks — copyright-safe stylings)
-// ---------------------------------------------------------------
-const BANKS = [
-  { id: 'ing',     name: 'ING',
-    svg: `<svg viewBox="0 0 120 36" xmlns="http://www.w3.org/2000/svg"><rect width="120" height="36" rx="6" fill="#FF6200"/><text x="60" y="24" text-anchor="middle" font-family="Inter, sans-serif" font-size="18" font-weight="700" fill="#fff" letter-spacing="2">ING</text></svg>` },
-  { id: 'dkb',     name: 'DKB',
-    svg: `<svg viewBox="0 0 120 36" xmlns="http://www.w3.org/2000/svg"><text x="60" y="25" text-anchor="middle" font-family="Inter, sans-serif" font-size="22" font-weight="700" fill="#14A2D1" letter-spacing="1">DKB</text></svg>` },
-  { id: 'consors', name: 'Consorsbank',
-    svg: `<svg viewBox="0 0 120 36" xmlns="http://www.w3.org/2000/svg"><circle cx="14" cy="18" r="7" fill="none" stroke="#1B4DA8" stroke-width="3"/><text x="28" y="23" font-family="Inter, sans-serif" font-size="13" font-weight="600" fill="#1B4DA8">consors</text></svg>` },
-  { id: 'tr',      name: 'Trade Republic',
-    svg: `<svg viewBox="0 0 120 36" xmlns="http://www.w3.org/2000/svg"><path d="M18 22 Q 40 4, 60 15 T 102 11" stroke="#0B1220" stroke-width="2.5" fill="none" stroke-linecap="round"/><text x="60" y="31" text-anchor="middle" font-family="Inter, sans-serif" font-size="8" font-weight="600" fill="#0B1220" letter-spacing="1.5">TRADE REPUBLIC</text></svg>` },
-  { id: 'n26',     name: 'N26',
-    svg: `<svg viewBox="0 0 120 36" xmlns="http://www.w3.org/2000/svg"><text x="60" y="25" text-anchor="middle" font-family="Inter, sans-serif" font-size="20" font-weight="700" fill="#0B1220" letter-spacing="1">N26</text></svg>` },
-  { id: 'sparkasse', name: 'Sparkasse',
-    svg: `<svg viewBox="0 0 120 36" xmlns="http://www.w3.org/2000/svg"><rect x="6" y="10" width="20" height="16" rx="2" fill="#E2001A"/><path d="M10 14 Q 16 10, 22 14 Q 16 22, 22 22 Q 16 22, 10 22 Q 16 18, 10 14 Z" fill="#fff"/><text x="32" y="23" font-family="Inter, sans-serif" font-size="12" font-weight="700" fill="#E2001A">Sparkasse</text></svg>` },
-  { id: 'deutsche', name: 'Deutsche Bank',
-    svg: `<svg viewBox="0 0 120 36" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="10" width="16" height="16" fill="none" stroke="#0018A8" stroke-width="2.5"/><line x1="10" y1="23" x2="22" y2="13" stroke="#0018A8" stroke-width="2.5"/><text x="30" y="23" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#0018A8">Deutsche Bank</text></svg>` },
-  { id: 'commerzbank', name: 'Commerzbank',
-    svg: `<svg viewBox="0 0 120 36" xmlns="http://www.w3.org/2000/svg"><path d="M10 12 L20 12 L15 20 Z" fill="#FFCC33"/><text x="26" y="23" font-family="Inter, sans-serif" font-size="12" font-weight="700" fill="#002F5F">Commerzbank</text></svg>` },
-  { id: 'comdirect', name: 'comdirect',
-    svg: `<svg viewBox="0 0 120 36" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="18" r="6" fill="#FFF04D"/><text x="28" y="23" font-family="Inter, sans-serif" font-size="14" font-weight="600" fill="#0B1220">comdirect</text></svg>` },
-];
-
-// ---------------------------------------------------------------
-// Formatting helpers (German locale)
+// Formatting helpers (German locale for money, plain for BTC)
 // ---------------------------------------------------------------
 const fmtEUR = (n) => '€ ' + n.toLocaleString('de-DE', {
   minimumFractionDigits: 2, maximumFractionDigits: 2
 });
-const fmtETH = (n) => n.toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' ETH';
-const fmtBTC = (sats) => (sats / 1e8).toLocaleString('en-US', {
-  minimumFractionDigits: 5, maximumFractionDigits: 5
+const fmtBTC = (btc) => btc.toLocaleString('en-US', {
+  minimumFractionDigits: 8, maximumFractionDigits: 8
 }) + ' BTC';
-const eurToSats = (eur) => Math.round((eur / adapter.getBackendInfo().rateEurPerBtc) * 1e8);
+const satsToBtc = (sats) => sats / 1e8;
+const fmtPremium = (pct) =>
+  typeof pct === 'number' && Number.isFinite(pct)
+    ? `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`
+    : '—';
+
+/** Accepts both 1.234,56 (de) and 1234.56 (en); the last separator wins. */
+function parseAmount(raw) {
+  const s = String(raw ?? '').trim().replace(/\s/g, '');
+  if (!s) return NaN;
+  const lastComma = s.lastIndexOf(',');
+  const lastDot = s.lastIndexOf('.');
+  const normalised = lastComma > lastDot
+    ? s.replace(/\./g, '').replace(',', '.')
+    : s.replace(/,/g, '');
+  return /^\d*\.?\d*$/.test(normalised) ? Number(normalised) : NaN;
+}
 
 // ---------------------------------------------------------------
 // DOM helpers
 // ---------------------------------------------------------------
 const $  = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+/** Render a <dl> of label/value rows. Values are set as text, never markup —
+ *  several of them are strings the trading network gave us. */
+function renderRows(el, rows) {
+  el.replaceChildren();
+  for (const { label, value, mono } of rows) {
+    const dt = document.createElement('dt');
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    dd.textContent = value;
+    if (mono) dd.classList.add('font-mono', 'break-all');
+    el.append(dt, dd);
+  }
+}
 
 // ---------------------------------------------------------------
 // Backend status pill (header)
@@ -141,7 +146,8 @@ function bindBackendStatus() {
       status === 'connected' ? `${backend} · ${network}` :
       status === 'connecting' ? 'connecting…' : 'backend offline';
   });
-  adapter.init().catch((err) => console.error('backend init failed', err));
+  adapterReady = adapter.init();
+  adapterReady.catch((err) => console.error('backend init failed', err));
 }
 
 // ---------------------------------------------------------------
@@ -157,154 +163,232 @@ function setStep(n) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 
   // Per-step setup
-  if (state.step === 3) renderBankNameLabel();
-  if (state.step === 4) initBridgeStep();
-  if (state.step === 5) renderPortfolio();
-  if (state.step === 6) { setExploreTab('assets'); renderExploreState(); }
+  if (state.step === 2) loadOffers();
+  if (state.step === 3) initAmountStep();
+  if (state.step === 4) initReviewStep();
+  if (state.step === 5) renderCompletion();
 }
 const next = () => setStep(state.step + 1);
 const prev = () => setStep(state.step - 1);
 
 // ---------------------------------------------------------------
-// Step 2 — Bank grid (demo fiction: a real desktop client has no bank step;
-// the fiat leg is a SEPA transfer from the user's own banking app)
+// Step 2 — Offer book (real: adapter.listOffers)
 // ---------------------------------------------------------------
-function renderBankGrid() {
-  const grid = $('#bankGrid');
-  grid.innerHTML = BANKS.map(b => `
-    <button class="bank-tile" data-bank="${b.id}" aria-label="${b.name}">
-      ${b.svg}
-    </button>
-  `).join('');
+function showOfferPane(which, message) {
+  const list = $('#offerList');
+  $('#offerLoading').classList.toggle('hidden', which !== 'loading');
+  $('#offerLoading').classList.toggle('flex', which === 'loading');
+  list.classList.toggle('hidden', which !== 'list');
+  list.classList.toggle('flex', which === 'list');
+  $('#offerEmpty').classList.toggle('hidden', which !== 'empty');
+  $('#offerEmpty').classList.toggle('flex', which === 'empty');
+  $('#offerError').classList.toggle('hidden', which !== 'error');
+  $('#offerError').classList.toggle('flex', which === 'error');
+  if (message) $('#offerErrorMsg').textContent = message;
+}
 
-  grid.addEventListener('click', (e) => {
-    const tile = e.target.closest('.bank-tile');
-    if (!tile) return;
-    const id = tile.dataset.bank;
-    const bank = BANKS.find(b => b.id === id);
-    state.selectedBank = id;
-    state.selectedBankName = bank.name;
-    $$('.bank-tile', grid).forEach(t => t.classList.toggle('selected', t === tile));
-    const btn = $('#connectBankBtn');
-    btn.disabled = false;
-    btn.classList.remove('is-disabled');
+/** Build one offer card. Every network-supplied string goes in as text. */
+function offerCardEl(offer) {
+  const btn = document.createElement('button');
+  btn.className = 'offer-card';
+  btn.dataset.offer = offer.id;
+  btn.setAttribute('role', 'radio');
+  btn.setAttribute('aria-checked', 'false');
+  btn.innerHTML = `
+    <span class="offer-body">
+      <span class="offer-top">
+        <span class="offer-maker"></span>
+        <span class="offer-rep"></span>
+      </span>
+      <span class="offer-price tabular-nums"></span>
+      <span class="offer-meta tabular-nums"></span>
+    </span>
+    <span class="offer-side">
+      <span class="offer-premium tabular-nums"></span>
+      <span class="offer-premium-cap">vs. market</span>
+    </span>`;
+
+  $('.offer-maker', btn).textContent = offer.maker || 'unknown seller';
+  $('.offer-price', btn).textContent = `${fmtEUR(offer.priceEurPerBtc)} / BTC`;
+  $('.offer-meta', btn).textContent =
+    `${fmtEUR(offer.minEur)} – ${fmtEUR(offer.maxEur)} · ${offer.paymentMethod || 'SEPA'}`;
+  $('.offer-premium', btn).textContent = fmtPremium(offer.premiumPct);
+
+  const rep = $('.offer-rep', btn);
+  if (offer.reputation != null) rep.textContent = `reputation ${offer.reputation}`;
+  else rep.remove();
+
+  return btn;
+}
+
+function selectOffer(offer, card) {
+  state.selectedOffer = offer;
+  $$('.offer-card').forEach((c) => {
+    const on = c === card;
+    c.classList.toggle('selected', on);
+    c.setAttribute('aria-checked', String(on));
   });
+  const btn = $('#chooseOfferBtn');
+  btn.disabled = false;
+  btn.classList.remove('is-disabled');
 }
 
-function bindBankSearch() {
-  const input = $('#bankSearch');
-  if (!input) return;
-  input.addEventListener('input', () => {
-    const q = input.value.trim().toLowerCase();
-    let visible = 0;
-    $$('.bank-tile').forEach(tile => {
-      const bank = BANKS.find(b => b.id === tile.dataset.bank);
-      const hit = !q || bank.name.toLowerCase().includes(q);
-      tile.classList.toggle('hidden', !hit);
-      if (hit) visible++;
-    });
-    const empty = $('#bankEmpty');
-    empty.classList.toggle('hidden', visible > 0);
-    empty.classList.toggle('flex', visible === 0);
-  });
-}
+let offersLoading = false;
+async function loadOffers({ force = false } = {}) {
+  if (offersLoading) return;
+  if (!force && state.offers.length) return;   // already have a book
+  offersLoading = true;
+  showOfferPane('loading');
+  try {
+    await adapterReady;
+    const offers = await adapter.listOffers({ fiat: 'EUR', direction: 'buy' });
+    // Cheapest first — the ordering a buyer actually wants. We rank what the
+    // network returned; we do not filter, match or broker it.
+    state.offers = [...offers].sort((a, b) => a.priceEurPerBtc - b.priceEurPerBtc);
 
-function renderBankNameLabel() {
-  $('#bankNameLabel').textContent = state.selectedBankName || 'your bank';
-}
+    const list = $('#offerList');
+    list.replaceChildren();
+    for (const offer of state.offers) {
+      const card = offerCardEl(offer);
+      card.addEventListener('click', () => selectOffer(offer, card));
+      list.append(card);
+    }
+    showOfferPane(state.offers.length ? 'list' : 'empty');
 
-// ---------------------------------------------------------------
-// Step 3 — Account balances (randomized on load)
-// ---------------------------------------------------------------
-const accountBalances = (() => {
-  const base = { 1: 2547.35, 2: 15832.42, 3: 8721.90 };
-  const r = {};
-  for (const k of Object.keys(base)) {
-    const variation = (Math.random() - 0.5) * 0.2;
-    r[k] = parseFloat((base[k] * (1 + variation)).toFixed(2));
+    // Keep a previous selection if it is still on the book.
+    if (state.selectedOffer) {
+      const still = state.offers.find((o) => o.id === state.selectedOffer.id);
+      const card = still && $(`.offer-card[data-offer="${CSS.escape(still.id)}"]`);
+      if (card) selectOffer(still, card);
+      else state.selectedOffer = null;
+    }
+    if (!state.selectedOffer) {
+      const btn = $('#chooseOfferBtn');
+      btn.disabled = true;
+      btn.classList.add('is-disabled');
+    }
+  } catch (err) {
+    console.error('could not load offers', err);
+    showOfferPane('error', err?.message || String(err));
+  } finally {
+    offersLoading = false;
   }
-  return r;
-})();
-
-function renderAccountBalances() {
-  $$('[data-balance]').forEach(el => {
-    const id = el.dataset.balance;
-    el.textContent = fmtEUR(accountBalances[id]);
-  });
-}
-
-function bindAccountSelection() {
-  $$('.account-card').forEach(card => {
-    card.addEventListener('click', () => {
-      const id = Number(card.dataset.account);
-      state.selectedAccount = id;
-      state.selectedBalance = accountBalances[id];
-      next();
-    });
-  });
 }
 
 // ---------------------------------------------------------------
-// Step 4 — Bridge interaction + particle animation
+// Step 3 — Amount & destination
+// ---------------------------------------------------------------
+function initAmountStep() {
+  const offer = state.selectedOffer;
+  if (!offer) { setStep(2); return; }
+
+  renderRows($('#offerChosen'), [
+    { label: 'Seller', value: offer.maker || 'unknown seller' },
+    { label: 'Price', value: `${fmtEUR(offer.priceEurPerBtc)} / BTC` },
+    { label: 'Accepts', value: `${fmtEUR(offer.minEur)} – ${fmtEUR(offer.maxEur)}` },
+  ]);
+  $('#amountHint').textContent =
+    `This seller accepts between ${fmtEUR(offer.minEur)} and ${fmtEUR(offer.maxEur)}.`;
+  validateAmountStep();
+}
+
+function amountProblem() {
+  const offer = state.selectedOffer;
+  const raw = $('#amountInput').value;
+  if (!String(raw).trim()) return { silent: true, msg: 'Enter an amount.' };
+  const v = parseAmount(raw);
+  if (!Number.isFinite(v) || v <= 0) return { msg: 'Enter an amount like 250 or 250,00.' };
+  if (v < offer.minEur) return { msg: `This seller's minimum is ${fmtEUR(offer.minEur)}.` };
+  if (v > offer.maxEur) return { msg: `This seller's maximum is ${fmtEUR(offer.maxEur)}.` };
+  return null;
+}
+
+function addressProblem() {
+  const raw = $('#addrInput').value.trim();
+  const network = adapter.getBackendInfo().network;
+  if (!raw) return { silent: true, msg: 'Enter your receive address.' };
+  if (!isValidBtcAddress(raw, { network })) {
+    // The checksum catches typos; the network check catches the much nastier
+    // case of a valid address for the wrong chain.
+    return { msg: `That is not a valid bitcoin address for the ${network} network.` };
+  }
+  return null;
+}
+
+function validateAmountStep() {
+  const offer = state.selectedOffer;
+  if (!offer) return;
+
+  const aProb = amountProblem();
+  const amountErr = $('#amountError');
+  amountErr.textContent = aProb && !aProb.silent ? aProb.msg : '';
+  amountErr.classList.toggle('hidden', !(aProb && !aProb.silent));
+  $('#amountInput').classList.toggle('field-invalid', !!(aProb && !aProb.silent));
+
+  const dProb = addressProblem();
+  const addrErr = $('#addrError');
+  addrErr.textContent = dProb && !dProb.silent ? dProb.msg : '';
+  addrErr.classList.toggle('hidden', !(dProb && !dProb.silent));
+  $('#addrInput').classList.toggle('field-invalid', !!(dProb && !dProb.silent));
+  $('#addrInput').classList.toggle('field-valid', !dProb);
+
+  const ok = !aProb && !dProb;
+  if (ok) {
+    state.amountEur = parseAmount($('#amountInput').value);
+    state.receiveAddress = $('#addrInput').value.trim();
+    const btc = state.amountEur / offer.priceEurPerBtc;
+    $('#amountSummary').textContent = `${fmtEUR(state.amountEur)} → ≈ ${fmtBTC(btc)}`;
+  } else {
+    $('#amountSummary').innerHTML = '&nbsp;';
+  }
+
+  const btn = $('#amountNextBtn');
+  btn.disabled = !ok;
+  btn.classList.toggle('is-disabled', !ok);
+}
+
+function bindAmountStep() {
+  $('#amountInput').addEventListener('input', validateAmountStep);
+  $('#addrInput').addEventListener('input', validateAmountStep);
+}
+
+// ---------------------------------------------------------------
+// Step 4 — Review, then take the offer
 // ---------------------------------------------------------------
 let particleAnim = null;
-let lastSliderPct = 0;
-let bridgeDirection = 1;   // 1 = bank→crypto (top→bottom), -1 = reverse
 
-function initBridgeStep() {
-  const slider = $('#bridgeSlider');
-  slider.value = 0;
-  lastSliderPct = 0;
-  bridgeDirection = 1;
-  updateBridge(0);
+function initReviewStep() {
+  const offer = state.selectedOffer;
+  if (!offer || !state.amountEur) { setStep(offer ? 3 : 2); return; }
 
-  slider.removeEventListener('input', onBridgeSliderInput);
-  slider.addEventListener('input', onBridgeSliderInput);
+  const btc = state.amountEur / offer.priceEurPerBtc;
+  $('#bankAmount').textContent = fmtEUR(state.amountEur);
+  $('#cryptoAmount').textContent = `≈ ${fmtBTC(btc)}`;
+  $('#bankFill').style.width = '100%';
+  $('#cryptoFill').style.width = '100%';
+
+  renderRows($('#reviewRows'), [
+    { label: 'Seller', value: offer.maker || 'unknown seller' },
+    { label: 'Price', value: `${fmtEUR(offer.priceEurPerBtc)} / BTC (${fmtPremium(offer.premiumPct)} vs. market)` },
+    { label: 'You send', value: `${fmtEUR(state.amountEur)} by ${offer.paymentMethod || 'SEPA'} transfer` },
+    { label: 'You receive', value: `≈ ${fmtBTC(btc)}` },
+    { label: 'To your address', value: state.receiveAddress, mono: true },
+  ]);
+
+  const btn = $('#confirmBridgeBtn');
+  btn.disabled = false;
+  btn.classList.remove('is-disabled');
+  btn.innerHTML = CONFIRM_LABEL;
 
   startParticleAnimation();
-}
-
-function onBridgeSliderInput(e) {
-  updateBridge(Number(e.target.value));
-}
-
-function updateBridge(pct) {
-  if (pct > lastSliderPct)      bridgeDirection =  1;
-  else if (pct < lastSliderPct) bridgeDirection = -1;
-  lastSliderPct = pct;
-
-  const ratio = pct / 100;
-  const crypto = state.selectedBalance * ratio;
-  const bank   = state.selectedBalance - crypto;
-
-  state.bridgedAmount = crypto;
-  state.bankAmount    = bank;
-
-  $('#bankAmount').textContent   = fmtEUR(bank);
-  $('#cryptoAmount').textContent = fmtEUR(crypto);
-  $('#bankFill').style.width   = `${100 - pct}%`;
-  $('#cryptoFill').style.width = `${pct}%`;
-  $('#sliderFill').style.width = `${pct}%`;
-  $('#sliderThumb').style.left  = `${pct}%`;
-  $('#bridgeAmountText').textContent = fmtEUR(crypto);
-
-  const confirm = $('#confirmBridgeBtn');
-  if (pct > 0) {
-    confirm.disabled = false; confirm.classList.remove('is-disabled');
-  } else {
-    confirm.disabled = true; confirm.classList.add('is-disabled');
-  }
-
-  if (particleAnim) {
-    particleAnim.setIntensity(ratio);
-    particleAnim.setDirection(bridgeDirection);
-  }
+  particleAnim?.setIntensity(reducedMotion() ? 0 : 0.22);
+  particleAnim?.setDirection(1);
 }
 
 // ----- Canvas particle animation: vertical glowing river -----
-// Bank (top) → Crypto (bottom) by default. Reverses when slider moves back.
-// Color is spatial: indigo at top, violet in middle, mint at bottom — so
-// the visual identity of each end is preserved regardless of flow direction.
+// Fiat (top) → bitcoin (bottom). Idles gently while you review and runs at
+// full intensity while the trade is in flight.
+// Color is spatial: indigo at top, violet in middle, mint at bottom.
 function startParticleAnimation() {
   if (particleAnim) particleAnim.stop();
   const canvas = $('#bridgeCanvas');
@@ -315,7 +399,7 @@ function startParticleAnimation() {
   let w = 0, h = 0;
   let particles = [];
   let intensity = 0;
-  let direction = 1;       // 1 = top→bottom (bank→crypto), -1 = reverse
+  let direction = 1;       // 1 = top→bottom (fiat→bitcoin), -1 = reverse
   let rafId = null;
   let spawnAcc = 0;
   let prevTs = 0;
@@ -373,7 +457,7 @@ function startParticleAnimation() {
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
     ctx.fillRect(0, 0, w, h);
 
-    // 2) Spawn — rate scales with slider intensity
+    // 2) Spawn — rate scales with intensity
     if (intensity > 0) {
       spawnAcc += dt * intensity * 0.28;
       while (spawnAcc > 1) { spawn(); spawnAcc -= 1; }
@@ -445,10 +529,9 @@ function startParticleAnimation() {
 }
 
 // ---------------------------------------------------------------
-// Bridge confirmation — a full trade through the OnrampAdapter.
-// The button narrates the trade states while the mock peer acts; a real
-// client pauses at AWAITING_FIAT_PAYMENT to show the IBAN + EPC QR from
-// getPaymentInstructions() and waits for the user's actual bank transfer.
+// Taking the offer — a full trade through the OnrampAdapter.
+// The trade pauses at AWAITING_FIAT_PAYMENT to show the seller's IBAN and an
+// EPC069-12 GiroCode, and waits for the user's actual bank transfer.
 // ---------------------------------------------------------------
 const TRADE_LABELS = {
   [TradeState.OFFER_TAKEN]:           'Offer taken…',
@@ -457,7 +540,7 @@ const TRADE_LABELS = {
   [TradeState.FIAT_RECEIVED]:         'Payment confirmed…',
   [TradeState.BTC_RELEASED]:          'Releasing bitcoin…',
 };
-const CONFIRM_LABEL = 'Confirm bridge <span class="material-symbols-outlined text-[18px]">arrow_forward</span>';
+const CONFIRM_LABEL = 'Take this offer <span class="material-symbols-outlined text-[18px]">arrow_forward</span>';
 
 // --- Payment screen (the fiat leg) --------------------------------------
 const formatIban = (iban) => (iban || '').replace(/\s+/g, '').replace(/(.{4})/g, '$1 ').trim();
@@ -519,7 +602,7 @@ function presentPayment(tradeId, instr, amountEur) {
 /** For non-custodial backends the trade parks after release until the user
  *  confirms the bitcoin arrived in their own wallet. */
 async function presentReceive(tradeId) {
-  const addr = await adapter.getReceiveAddress().catch(() => null);
+  const addr = state.receiveAddress || await adapter.getReceiveAddress().catch(() => null);
   if (addr) $('#payAddr').textContent = addr;
   paymentPhase('receive');
   return new Promise((resolve, reject) => {
@@ -542,17 +625,17 @@ async function presentReceive(tradeId) {
   });
 }
 
-async function runBridgeTrade(fiatAmountEur) {
-  const offers = await adapter.listOffers({ fiat: 'EUR', direction: 'buy' });
-  const offer = offers
-    .filter(o => fiatAmountEur >= o.minEur && fiatAmountEur <= o.maxEur)
-    .sort((a, b) => a.priceEurPerBtc - b.priceEurPerBtc)[0] || offers[0];
+async function runTrade() {
+  const offer = state.selectedOffer;
+  const fiatAmountEur = state.amountEur;
   const trade = await adapter.takeOffer(offer.id, { fiatAmountEur });
+  state.trade = trade;
 
   const btn = $('#confirmBridgeBtn');
   let shownPayment = false;
   await new Promise((resolve, reject) => {
-    const unsub = adapter.subscribeTrade(trade.id, async (tradeState) => {
+    const unsub = adapter.subscribeTrade(trade.id, async (tradeState, updated) => {
+      if (updated) state.trade = updated;
       if (TRADE_LABELS[tradeState]) {
         btn.innerHTML = `<span class="spinner"></span> ${TRADE_LABELS[tradeState]}`;
       }
@@ -584,28 +667,40 @@ async function runBridgeTrade(fiatAmountEur) {
   });
 }
 
-function bindBridgeConfirm() {
+function bindTakeOffer() {
   const btn = $('#confirmBridgeBtn');
   btn.addEventListener('click', async () => {
-    if (state.bridgedAmount <= 0 || btn.dataset.busy) return;
+    if (!state.selectedOffer || state.amountEur <= 0 || btn.dataset.busy) return;
     btn.dataset.busy = '1';
     btn.classList.add('is-disabled');
-    btn.innerHTML = '<span class="spinner"></span> Fetching offers…';
+    btn.innerHTML = '<span class="spinner"></span> Taking the offer…';
+    particleAnim?.setIntensity(reducedMotion() ? 0 : 1);
 
+    let failed = null;
     try {
-      await runBridgeTrade(state.bridgedAmount);
+      await runTrade();
     } catch (err) {
-      // Mock backend never fails; a real adapter surfaces this in the UI.
-      console.error('bridge trade failed', err);
+      failed = err;
+      console.error('trade failed', err);
     }
 
-    state.cryptoBalance += state.bridgedAmount;   // accumulate across bridge rounds
-    state.selectedBalance = state.bankAmount;     // remaining bank money is the new pot
+    particleAnim?.setIntensity(reducedMotion() ? 0 : 0.22);
     delete btn.dataset.busy;
+    btn.classList.remove('is-disabled');
     btn.innerHTML = CONFIRM_LABEL;
 
+    if (failed) {
+      // A real backend can fail here; say so instead of pretending it worked.
+      const rows = $('#reviewRows');
+      renderRows(rows, [{ label: 'Trade failed', value: failed.message || String(failed) }]);
+      return;
+    }
+
     const overlay = $('#bridgeSuccess');
-    $('#successAmount').textContent = fmtEUR(state.bridgedAmount);
+    const boughtSats = state.trade?.btcAmountSats;
+    $('#successAmount').textContent = boughtSats != null
+      ? fmtBTC(satsToBtc(boughtSats))
+      : fmtBTC(state.amountEur / state.selectedOffer.priceEurPerBtc);
     overlay.classList.add('show');
     overlay.setAttribute('aria-hidden', 'false');
     setTimeout(() => {
@@ -617,447 +712,85 @@ function bindBridgeConfirm() {
 }
 
 // ---------------------------------------------------------------
-// Step 5 — Portfolio
+// Step 5 — Completion summary
+//
+// Deliberately not a "portfolio": we do not custody the coins and cannot see
+// the user's balance, so this reports what the trade did and stops there.
 // ---------------------------------------------------------------
-function animateAmount(el, target, duration = 700) {
-  if (reducedMotion() || target <= 0) { el.textContent = fmtEUR(target); return; }
-  const t0 = performance.now();
-  const frame = (t) => {
-    const k = Math.min(1, (t - t0) / duration);
-    const ease = 1 - Math.pow(1 - k, 3);
-    el.textContent = fmtEUR(target * ease);
-    if (k < 1) requestAnimationFrame(frame);
-  };
-  requestAnimationFrame(frame);
-}
-
-async function renderWalletFacts() {
+function renderCompletion() {
   const info = adapter.getBackendInfo();
   $('#assetLabel').textContent   = info.asset;
   $('#networkLabel').textContent = `${info.backend} · ${info.network}`;
-  const bal = await adapter.getWalletBalance();
-  $('#portfolioSats').textContent = bal.confirmedSats > 0
-    ? `≈ ${fmtBTC(bal.confirmedSats)} in your self-custodied wallet`
-    : 'Nothing bridged yet';
-}
 
-function renderPortfolio() {
-  animateAmount($('#portfolioAmount'), state.cryptoBalance);
-  renderWalletFacts();
-  renderHoldings();
+  const trade = state.trade;
+  const offer = state.selectedOffer;
+  const btc = trade?.btcAmountSats != null
+    ? satsToBtc(trade.btcAmountSats)
+    : (offer && state.amountEur ? state.amountEur / offer.priceEurPerBtc : 0);
 
-  const accountTypes = { 1: 'Checking', 2: 'Savings', 3: 'Investment' };
-  const ibans = {
-    1: 'DE89 1001 1001 1234 5678 90',
-    2: 'DE89 1001 1001 9876 5432 10',
-    3: 'DE89 1001 1001 2468 1357 90',
-  };
+  $('#portfolioSats').textContent  = `≈ ${fmtBTC(btc)}`;
+  $('#portfolioAmount').textContent = `for ${fmtEUR(trade?.fiatAmountEur ?? state.amountEur)}`;
 
-  const container = $('#connectedAccounts');
-  container.innerHTML = [1, 2, 3].map(id => {
-    const isBridged = id === state.selectedAccount;
-    const balance = isBridged ? state.bankAmount : accountBalances[id];
-    return `
-      <div class="funding-row ${isBridged ? 'is-bridged' : ''}">
-        ${isBridged ? `
-          <div class="ribbon">
-            <span class="material-symbols-outlined text-[12px]">done</span>
-            Used for bridge
-          </div>` : ''}
-        <div class="icon-tile">
-          <span class="material-symbols-outlined">account_balance</span>
-        </div>
-        <div class="flex flex-col">
-          <span class="font-semibold">${state.selectedBankName || 'CryptoBridge'} · ${accountTypes[id]}</span>
-          <span class="text-[13px] text-ink2 font-mono">${ibans[id].slice(-9)}</span>
-        </div>
-        <div class="ml-auto text-right">
-          <div class="text-[13px] text-ink2">Balance</div>
-          <div class="font-semibold tabular-nums">${fmtEUR(balance)}</div>
-        </div>
-      </div>
-    `;
-  }).join('');
-}
-
-function bindExploreShortcuts() {
-  $$('.explore-card').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const target = btn.dataset.explore; // assets|savings|swap
-      setStep(6);
-      setExploreTab(target);
-    });
-  });
-}
-
-// ---------------------------------------------------------------
-// Step 6 — Explore tabs + risk slider
-// ---------------------------------------------------------------
-function setExploreTab(tab) {
-  $$('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-  $$('.tab-panel').forEach(p => p.classList.toggle('hidden', p.dataset.tabPanel !== tab));
-  if (tab === 'savings') {
-    // Random count for flavor (47 default in markup)
-    $('#savingsCount').textContent = String(20 + Math.floor(Math.random() * 50));
+  const rows = [
+    { label: 'To your address', value: state.receiveAddress || '—', mono: true },
+  ];
+  if (offer) {
+    rows.push({ label: 'Seller', value: offer.maker || 'unknown seller' });
+    rows.push({ label: 'Price', value: `${fmtEUR(offer.priceEurPerBtc)} / BTC` });
   }
+  if (trade?.id) rows.push({ label: 'Trade', value: trade.id, mono: true });
+  renderRows($('#destinationRows'), rows);
 }
 
-function bindTabs() {
-  $$('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => setExploreTab(btn.dataset.tab));
+function bindNewTrade() {
+  $('#newTradeBtn').addEventListener('click', () => {
+    state.selectedOffer = null;
+    state.amountEur = 0;
+    state.trade = null;
+    state.offers = [];
+    $('#amountInput').value = '';
+    // The receive address is deliberately kept: it is the user's own wallet
+    // and retyping it is the risky part, not the reusing.
+    setStep(2);
   });
 }
 
-const YIELDS = {
-  1: { title: 'Stable Yield Pool',         apy: '1.5%', sub: 'Low risk · Flex withdrawal',  fill: 10  },
-  2: { title: 'Conservative Yield Fund',   apy: '2.8%', sub: 'Low risk · 7d lock',          fill: 30  },
-  3: { title: 'Balanced Yield Strategy',   apy: '4.2%', sub: 'Medium risk · 30d lock',      fill: 50  },
-  4: { title: 'Growth Yield Portfolio',    apy: '6.5%', sub: 'Higher risk · 60d lock',      fill: 75  },
-  5: { title: 'High Yield Opportunity',    apy: '9.8%', sub: 'High risk · 90d lock',        fill: 100 },
+// ---------------------------------------------------------------
+// Deep links — #step=N jumps into the flow.
+// Prerequisites are seeded only on the mock backend; against a real one we
+// stop at the last step whose inputs actually exist, because inventing an
+// offer or a receive address would be exactly the fiction we just removed.
+// ---------------------------------------------------------------
+const MOCK_DEMO_ADDRESS = {
+  regtest: 'bcrt1qqv9pzxqlyckngw6zf9g9whn9d3eh4qvg0z9lm9',
+  testnet: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx',
+  signet:  'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx',
+  mainnet: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4',
 };
-const RISK_LABELS = ['', 'Conservative (Level 1)', 'Cautious (Level 2)', 'Balanced (Level 3)', 'Growth (Level 4)', 'Aggressive (Level 5)'];
 
-let currentRisk = 3;
-
-function bindRiskSlider() {
-  const slider = $('#riskSlider');
-  if (!slider) return;
-  slider.addEventListener('input', (e) => {
-    const v = Number(e.target.value);
-    currentRisk = v;
-    const y = YIELDS[v];
-    $('#productTitle').textContent = y.title;
-    $('#productSub').textContent   = y.sub;
-    $('#productApy').textContent   = y.apy;
-    $('#riskFill').style.width = `${y.fill}%`;
-    $('#riskLabel').textContent = RISK_LABELS[v];
-  });
-}
-
-// ---------------------------------------------------------------
-// Modals (shared open/close)
-// ---------------------------------------------------------------
-function openModal(el)  { el.classList.add('show');    el.setAttribute('aria-hidden', 'false'); }
-function closeModal(el) { el.classList.remove('show'); el.setAttribute('aria-hidden', 'true');  }
-
-function bindModals() {
-  $$('.modal').forEach(modal => {
-    modal.addEventListener('click', (e) => {
-      if (e.target === modal || e.target.closest('[data-close]')) closeModal(modal);
-    });
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') $$('.modal.show').forEach(closeModal);
-  });
-}
-
-// ---------------------------------------------------------------
-// Explore — wallet pill, art marketplace, yield positions.
-// Purchases stay demo fiction, but the spend is mirrored to the adapter
-// wallet via withdraw() so the sats balance on the portfolio stays honest.
-// ---------------------------------------------------------------
-function mirrorSpendToWallet(eur, memo) {
-  adapter.withdraw(`demo:${memo}`, eurToSats(eur)).catch(() => { /* demo only */ });
-}
-
-function updateWalletPill() {
-  $('#walletBalance').textContent = fmtEUR(state.cryptoBalance);
-}
-
-function renderExploreState() {
-  updateWalletPill();
-  renderArtGrid();
-  renderYieldPositions();
-}
-
-function renderArtGrid() {
-  const grid = $('#artGrid');
-  grid.innerHTML = ARTWORKS.map(a => {
-    const owned = state.owned.includes(a.id);
-    return `
-      <article class="nft-card">
-        <div class="nft-thumb relative" data-art="${a.art}">
-          ${owned ? '<span class="owned-badge"><span class="material-symbols-outlined text-[13px]">check</span>Owned</span>' : ''}
-        </div>
-        <div class="p-4 flex flex-col gap-2">
-          <div class="flex justify-between items-start">
-            <span class="text-[12px] text-ink2">${a.artist}</span>
-            ${a.verified ? '<span class="material-symbols-outlined text-indigo text-[16px]">verified</span>' : ''}
-          </div>
-          <h3 class="font-semibold truncate">${a.title}</h3>
-          <div class="pt-2 border-t border-line flex justify-between items-end">
-            <div>
-              <div class="text-[10px] uppercase tracking-wider text-ink2">Floor</div>
-              <div class="font-semibold tabular-nums">${fmtETH(a.floor)}</div>
-            </div>
-            <span class="text-[12px] text-ink2 tabular-nums">Vol: ${a.vol} ETH</span>
-          </div>
-          <button class="btn-secondary w-full mt-1 ${owned ? 'is-owned' : ''}" data-buy="${a.id}" ${owned ? 'disabled' : ''}>
-            ${owned ? 'In your portfolio' : `Buy · ${fmtEUR(a.floor * ETH_EUR)}`}
-          </button>
-        </div>
-      </article>`;
-  }).join('');
-
-  $$('[data-buy]', grid).forEach(btn => {
-    btn.addEventListener('click', () => openArtModal(btn.dataset.buy));
-  });
-}
-
-function openArtModal(id) {
-  const a = ARTWORKS.find(x => x.id === id);
-  const priceEur = a.floor * ETH_EUR;
-  const affordable = state.cryptoBalance >= priceEur;
-  const body = $('#artModalBody');
-
-  body.innerHTML = `
-    <div class="nft-thumb modal-thumb" data-art="${a.art}"></div>
-    <div class="flex justify-between items-start mt-4">
-      <div>
-        <div class="text-[12px] text-ink2">${a.artist}</div>
-        <h3 class="text-[20px] font-semibold tracking-[-0.01em]">${a.title}</h3>
-      </div>
-      ${a.verified ? '<span class="material-symbols-outlined text-indigo">verified</span>' : ''}
-    </div>
-    <div class="flex justify-between items-center mt-4 py-3 border-y border-line text-[14px]">
-      <span class="text-ink2">Price</span>
-      <span class="font-semibold tabular-nums">${fmtETH(a.floor)} · ${fmtEUR(priceEur)}</span>
-    </div>
-    <div class="flex justify-between items-center py-3 border-b border-line text-[14px]">
-      <span class="text-ink2">Your bridged balance</span>
-      <span class="font-semibold tabular-nums ${affordable ? 'text-ink' : 'text-red-500'}">${fmtEUR(state.cryptoBalance)}</span>
-    </div>
-    ${affordable ? `
-      <button id="artBuyBtn" class="btn-primary w-full mt-5">
-        Buy for ${fmtETH(a.floor)}
-        <span class="material-symbols-outlined text-[18px]">arrow_forward</span>
-      </button>
-      <p class="text-[12px] text-muted text-center mt-2">Network fee ~€0.42 · Instant transfer to your wallet</p>
-    ` : `
-      <div class="insufficient-note mt-5">
-        <span class="material-symbols-outlined text-[18px]">error</span>
-        You need ${fmtEUR(priceEur - state.cryptoBalance)} more to collect this piece.
-      </div>
-      <button id="bridgeMoreBtn" class="btn-primary w-full mt-3">
-        Bridge more euros
-        <span class="material-symbols-outlined text-[18px]">arrow_forward</span>
-      </button>
-    `}`;
-
-  const modal = $('#artModal');
-  openModal(modal);
-
-  const buyBtn = $('#artBuyBtn');
-  if (buyBtn) buyBtn.addEventListener('click', () => {
-    buyBtn.classList.add('is-disabled');
-    buyBtn.innerHTML = '<span class="spinner"></span> Confirming purchase…';
-    setTimeout(() => {
-      state.cryptoBalance -= priceEur;
-      state.owned.push(a.id);
-      mirrorSpendToWallet(priceEur, `art-${a.id}`);
-      body.innerHTML = `
-        <div class="flex flex-col items-center text-center py-6">
-          <div class="success-check"><span class="material-symbols-outlined text-[40px]">check</span></div>
-          <p class="text-[18px] font-semibold mt-5">It's yours</p>
-          <p class="text-[14px] text-ink2 mt-1"><strong>${a.title}</strong> is now in your portfolio.</p>
-          <p class="text-[13px] text-muted mt-3 tabular-nums">New balance: ${fmtEUR(state.cryptoBalance)}</p>
-          <button class="btn-primary w-full mt-6" data-close>Done</button>
-        </div>`;
-      renderExploreState();
-    }, reducedMotion() ? 300 : 1100);
-  });
-
-  const moreBtn = $('#bridgeMoreBtn');
-  if (moreBtn) moreBtn.addEventListener('click', () => {
-    closeModal(modal);
-    setStep(4);
-  });
-}
-
-// ----- Yield investing -----
-function openInvestModal() {
-  const y = YIELDS[currentRisk];
-  const body = $('#investModalBody');
-  const max = state.cryptoBalance;
-
-  body.innerHTML = `
-    <div class="flex items-center gap-3">
-      <div class="h-11 w-11 rounded-xl2 bg-bg border border-line grid place-items-center">
-        <span class="material-symbols-outlined text-[20px]">savings</span>
-      </div>
-      <div>
-        <h3 class="text-[18px] font-semibold tracking-[-0.01em]">${y.title}</h3>
-        <span class="text-[13px] text-ink2">${y.sub} · <strong class="text-mint">${y.apy} APY</strong></span>
-      </div>
-    </div>
-    <div class="mt-5">
-      <div class="flex justify-between items-center mb-1.5">
-        <label for="investAmount" class="text-[12px] text-ink2">Amount to invest</label>
-        <span class="text-[12px] text-muted tabular-nums">Available: ${fmtEUR(max)}</span>
-      </div>
-      <input id="investAmount" type="text" inputmode="decimal" placeholder="0.00"
-        class="w-full h-12 px-4 bg-bg border border-line rounded-xl2 text-[18px] font-semibold tabular-nums focus:outline-none focus:border-indigo focus:shadow-ring transition" />
-      <div class="flex gap-2 mt-2.5">
-        ${[25, 50, 75, 100].map(p => `<button class="amount-chip" data-pct="${p}">${p === 100 ? 'Max' : p + '%'}</button>`).join('')}
-      </div>
-    </div>
-    <div class="flex justify-between items-center mt-5 py-3 border-y border-line text-[14px]">
-      <span class="text-ink2">Projected earnings (1y)</span>
-      <span id="investProj" class="font-semibold text-mint tabular-nums">€ 0,00</span>
-    </div>
-    <button id="investConfirm" class="btn-primary w-full mt-5 is-disabled" disabled>Invest</button>
-    <p class="text-[12px] text-muted text-center mt-2">Withdraw anytime after the lock period · Demo, no real yield</p>`;
-
-  const modal = $('#investModal');
-  openModal(modal);
-
-  const input = $('#investAmount');
-  const confirm = $('#investConfirm');
-  const apyRate = parseFloat(y.apy) / 100;
-  let amount = 0;
-
-  const refresh = () => {
-    let s = String(input.value).trim();
-    if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.'); // German format
-    const v = parseFloat(s);
-    amount = Number.isFinite(v) && v > 0 ? Math.min(v, max) : 0;
-    $('#investProj').textContent = fmtEUR(amount * apyRate);
-    confirm.disabled = amount <= 0;
-    confirm.classList.toggle('is-disabled', amount <= 0);
-    confirm.textContent = amount > 0 ? `Invest ${fmtEUR(amount)}` : 'Invest';
-  };
-  input.addEventListener('input', refresh);
-
-  $$('.amount-chip', body).forEach(chip => {
-    chip.addEventListener('click', () => {
-      $$('.amount-chip', body).forEach(c => c.classList.toggle('active', c === chip));
-      input.value = (max * Number(chip.dataset.pct) / 100).toFixed(2).replace('.', ',');
-      refresh();
-    });
-  });
-
-  confirm.addEventListener('click', () => {
-    if (amount <= 0) return;
-    state.cryptoBalance -= amount;
-    state.positions.push({ title: y.title, apy: y.apy, sub: y.sub, amount });
-    mirrorSpendToWallet(amount, 'yield');
-    body.innerHTML = `
-      <div class="flex flex-col items-center text-center py-6">
-        <div class="success-check"><span class="material-symbols-outlined text-[40px]">check</span></div>
-        <p class="text-[18px] font-semibold mt-5">Position opened</p>
-        <p class="text-[14px] text-ink2 mt-1"><strong class="tabular-nums">${fmtEUR(amount)}</strong> is earning <strong class="text-mint">${y.apy} APY</strong> in ${y.title}.</p>
-        <p class="text-[13px] text-muted mt-3 tabular-nums">New balance: ${fmtEUR(state.cryptoBalance)}</p>
-        <button class="btn-primary w-full mt-6" data-close>Done</button>
-      </div>`;
-    renderExploreState();
-  });
-}
-
-function renderYieldPositions() {
-  const wrap = $('#yieldPositions');
-  const has = state.positions.length > 0;
-  wrap.classList.toggle('hidden', !has);
-  wrap.classList.toggle('flex', has);
-  if (!has) return;
-  $('#yieldPositionsList').innerHTML = state.positions.map(p => `
-    <div class="funding-row">
-      <div class="icon-tile"><span class="material-symbols-outlined">savings</span></div>
-      <div class="flex flex-col">
-        <span class="font-semibold">${p.title}</span>
-        <span class="text-[13px] text-ink2">${p.sub}</span>
-      </div>
-      <div class="ml-auto text-right">
-        <div class="font-semibold tabular-nums">${fmtEUR(p.amount)}</div>
-        <div class="text-[13px] text-mint tabular-nums">${p.apy} APY</div>
-      </div>
-    </div>`).join('');
-}
-
-// ----- Portfolio holdings (step 5) -----
-function renderHoldings() {
-  const section = $('#holdingsSection');
-  const art = state.owned.map(id => ARTWORKS.find(a => a.id === id));
-  const has = art.length > 0 || state.positions.length > 0;
-  section.classList.toggle('hidden', !has);
-  section.classList.toggle('flex', has);
-  if (!has) return;
-
-  $('#holdingsList').innerHTML = [
-    ...art.map(a => `
-      <div class="funding-row">
-        <div class="nft-thumb holding-thumb" data-art="${a.art}"></div>
-        <div class="flex flex-col">
-          <span class="font-semibold">${a.title}</span>
-          <span class="text-[13px] text-ink2">${a.artist} · Digital art</span>
-        </div>
-        <div class="ml-auto text-right">
-          <div class="font-semibold tabular-nums">${fmtETH(a.floor)}</div>
-          <div class="text-[13px] text-ink2 tabular-nums">${fmtEUR(a.floor * ETH_EUR)}</div>
-        </div>
-      </div>`),
-    ...state.positions.map(p => `
-      <div class="funding-row">
-        <div class="icon-tile"><span class="material-symbols-outlined">savings</span></div>
-        <div class="flex flex-col">
-          <span class="font-semibold">${p.title}</span>
-          <span class="text-[13px] text-ink2">Yield position</span>
-        </div>
-        <div class="ml-auto text-right">
-          <div class="font-semibold tabular-nums">${fmtEUR(p.amount)}</div>
-          <div class="text-[13px] text-mint tabular-nums">${p.apy} APY</div>
-        </div>
-      </div>`),
-  ].join('');
-}
-
-// ---------------------------------------------------------------
-// Swap calculator (demo rate, no network)
-// ---------------------------------------------------------------
-const SWAP = { eurPerEth: ETH_EUR, fee: 0.0012 }; // ETH → USDC, USDC pegged 1:1 EUR for the demo
-
-function bindSwap() {
-  const pay = $('#swapPay');
-  if (!pay) return;
-  const update = () => {
-    const v = parseFloat(String(pay.value).replace(',', '.'));
-    const eth = Number.isFinite(v) && v > 0 ? v : 0;
-    const eur = eth * SWAP.eurPerEth;
-    const out = eur * (1 - SWAP.fee);
-    $('#swapPayEur').textContent = fmtEUR(eur);
-    $('#swapReceive').value = out.toFixed(2);
-    $('#swapReceiveEur').textContent = `${fmtEUR(out)} (−${(SWAP.fee * 100).toFixed(2)}%)`;
-  };
-  pay.addEventListener('input', update);
-  update();
-}
-
-// ---------------------------------------------------------------
-// Deep links — #step=N jumps into the flow with seeded demo state
-// ---------------------------------------------------------------
-function applyDeepLink() {
+async function applyDeepLink() {
   const m = location.hash.match(/step=(\d)/);
   if (!m) return false;
   const target = Math.max(1, Math.min(TOTAL_STEPS, Number(m[1])));
-  if (target >= 3 && !state.selectedBank) {
-    state.selectedBank = 'ing';
-    state.selectedBankName = 'ING';
+  if (target <= 2) { setStep(target); return true; }
+
+  const info = adapter.getBackendInfo();
+  const isMock = info.backend === 'mock';
+  if (!isMock) { setStep(2); return true; }
+
+  await loadOffers({ force: true });
+  if (!state.offers.length) { setStep(2); return true; }
+  state.selectedOffer = state.offers[0];
+  const card = $(`.offer-card[data-offer="${CSS.escape(state.selectedOffer.id)}"]`);
+  if (card) selectOffer(state.selectedOffer, card);
+
+  if (target >= 4) {
+    state.amountEur = Math.min(Math.max(500, state.selectedOffer.minEur), state.selectedOffer.maxEur);
+    state.receiveAddress = MOCK_DEMO_ADDRESS[info.network] || MOCK_DEMO_ADDRESS.regtest;
+    $('#amountInput').value = String(state.amountEur);
+    $('#addrInput').value = state.receiveAddress;
   }
-  if (target >= 4 && !state.selectedAccount) {
-    state.selectedAccount = 2;
-    state.selectedBalance = accountBalances[2];
-  }
-  if (target >= 5 && state.bridgedAmount === 0) {
-    state.bridgedAmount = state.selectedBalance * 0.4;
-    state.bankAmount = state.selectedBalance * 0.6;
-    state.cryptoBalance = state.bridgedAmount;
-    state.selectedBalance = state.bankAmount;
-    adapter.seedWallet?.(state.cryptoBalance);  // mock-only helper; keeps the sats view consistent
-  }
-  setStep(target);
-  if (target === 4) {
-    $('#bridgeSlider').value = 40;
-    updateBridge(40);
-  }
+  setStep(target >= 5 ? 4 : target);   // step 5 needs a real trade; land on review
   return true;
 }
 
@@ -1074,19 +807,11 @@ function bindGlobalActions() {
   $('#backBtn').addEventListener('click', prev);
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   bindBackendStatus();
-  renderBankGrid();
-  bindBankSearch();
-  renderAccountBalances();
-  bindAccountSelection();
   bindGlobalActions();
-  bindBridgeConfirm();
-  bindTabs();
-  bindRiskSlider();
-  bindSwap();
-  bindExploreShortcuts();
-  bindModals();
-  $('#investBtn').addEventListener('click', openInvestModal);
-  if (!applyDeepLink()) setStep(1);
+  bindAmountStep();
+  bindTakeOffer();
+  bindNewTrade();
+  if (!(await applyDeepLink())) setStep(1);
 });

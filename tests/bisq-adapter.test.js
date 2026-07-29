@@ -128,3 +128,26 @@ test('offer pricing: market/float/fix specs and amount ranges', () => {
   assert.deepEqual(a._amountRange({ amountSpec: { type: 'QuoteSideFixedAmountSpec', amount: 500000 } }), { minEur: 50, maxEur: 50 });
   assert.deepEqual(a._amountRange({ amountSpec: { type: 'RangeAmountSpec', minAmount: 250000, maxAmount: 2000000 } }), { minEur: 25, maxEur: 200 });
 });
+
+// The pattern app.js relies on since the receive address moved into the UI:
+// the wallet asks for the address at the moment it needs one, so whatever the
+// user typed in step 3 is what the seller is told to pay. A bug here sends
+// someone's coins to the wrong address, so it gets its own test.
+test('ExternalWallet addressProvider reads live UI state and re-validates every time', async () => {
+  const ui = { receiveAddress: '' };
+  const w = new ExternalWallet({ addressProvider: () => ui.receiveAddress, network: 'mainnet' });
+
+  // Nothing typed yet: refuse rather than hand out a blank destination.
+  await assert.rejects(() => w.getReceiveAddress(), /failed validation/);
+
+  ui.receiveAddress = 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4';
+  assert.equal(await w.getReceiveAddress(), ui.receiveAddress);
+
+  // The provider is consulted on every call, so a later edit is picked up.
+  ui.receiveAddress = 'bc1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3qccfmv3';
+  assert.equal(await w.getReceiveAddress(), ui.receiveAddress);
+
+  // And a wrong-chain address cannot sneak in on a later edit either.
+  ui.receiveAddress = 'bcrt1qqv9pzxqlyckngw6zf9g9whn9d3eh4qvg0z9lm9';
+  await assert.rejects(() => w.getReceiveAddress(), /failed validation/);
+});

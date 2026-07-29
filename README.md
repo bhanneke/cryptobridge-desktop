@@ -19,8 +19,9 @@ a pluggable `OnrampAdapter` with a working mock backend, so the UI is real befor
 > **Status: pre-release.** A real Bisq 2 backend is wired in and live-verified — a full
 > buyer-side BTC/EUR trade runs end to end through the adapter, and inside the desktop app every
 > byte of that traffic goes through the Rust shell so the webview keeps `connect-src 'self'`.
-> What is *not* done: the default UI is still the prototype's demo (bank picker, art, yield),
-> and pairing auth is unimplemented. Do not point this at mainnet. No real money has moved.
+> The UI is now the real flow throughout: the prototype's demo fiction has been **deleted**, not
+> hidden behind a flag. What is *not* done: pairing auth, node supervision, Tor, reproducible
+> builds, and the security audit. Do not point this at mainnet. No real money has moved.
 
 ## What this is
 
@@ -96,24 +97,28 @@ Ground rules from the plan, enforced by construction here:
 
 | Bright line | How this repo holds it |
 |---|---|
-| No custody | Wallet is the user's; adapter exposes balance/withdraw of *their* keys |
+| No custody | The receive address is the user's own, typed in step 3 and checksum-validated for the right chain; we generate no address and hold no keys |
 | No fiat handling | Fiat leg is described (`getPaymentInstructions` → IBAN + EPC QR), never executed |
+| No order intermediation | The offer book is the network's. We rank it cheapest-first for display and take the one the user picks — no matching, no brokering |
+| No yield, no advice | No such screen exists any more (see below); the e2e suite fails if one returns |
 | No server in the trade path | Static webview + local adapter. The webview cannot open a socket at all — `connect-src` stays `'self'` and Bisq traffic crosses IPC to a Rust proxy pinned to loopback ([`proxy.rs`](src-tauri/src/proxy.rs)) |
 | No CDN / phone-home | Fonts vendored ([`src/vendor`](src/vendor)), Tailwind compiled to a static file |
 | Open source | AGPL-3.0, same family as Bisq |
 
-The bank-connect steps (2–3) and the explore endgame (art, yield, swap) are **demo fiction
-carried over from the prototype** — clearly marked in the code, and next in line to be replaced
-by the real offer book. The fiat leg is no longer among them: it is a real payment screen. Note
-that the yield/APY screens sit awkwardly against the plan's own bright lines, which is the main
-reason they are scheduled to go rather than to be finished.
+Two of those lines used to be contradicted by the app's own UI. The prototype shipped an
+"Earn yield" screen with a risk slider and an APY projection, plus a token swap — exactly what
+*no yield* and *no advice* rule out. They are now **deleted rather than flag-gated**: a bright
+line defended by a runtime flag is not much of a line, and an auditor reads the strings in the
+binary, not the flag. The e2e suite fails if any of it comes back. The demo still lives in the
+[prototype repo](https://github.com/bhanneke/crypto-onramp) and on GitHub Pages, which is where
+a demo belongs.
 
 ## Project structure
 
 ```
 .
 ├── src/                      # webview UI — also runs in any browser
-│   ├── index.html            # six-step flow (ported from crypto-onramp)
+│   ├── index.html            # five-step flow: welcome → offers → amount+address → review → done
 │   ├── app.js                # UI layer, routed through the adapter
 │   ├── adapters/
 │   │   ├── onramp-adapter.js # THE interface (+ TradeState)
@@ -163,9 +168,15 @@ reason they are scheduled to go rather than to be finished.
    backend compiled in** — CI fails if one ever enters the dependency tree. The JS side is a
    transport seam ([`src/adapters/transport.js`](src/adapters/transport.js)) so the same adapter
    runs over `fetch`/`WebSocket` in a browser and over IPC in the app. The CSP was not widened.
-5. **Replace demo fiction** — offer book instead of bank picker; drop yield/art or move them
-   behind a "demo" flag. Then: pairing auth, node supervision and Tor in the Rust shell,
-   reproducible builds, and a full adversarial security audit.
+5. ~~**Replace the demo fiction**~~ **Done (2026-07-24)** — the flow is real end to end and is
+   now five steps, not six. The PSD2 bank picker and invented account balances are replaced by
+   a **live offer book** (`adapter.listOffers`) and an **amount + your-own-receive-address**
+   step, with bech32/bech32m validation that rejects both a broken checksum and a valid address
+   for the wrong chain. The art / yield / swap endgame is **deleted**, not flag-gated — see the
+   bright-line note above. Offer text comes from a P2P network, so it enters the DOM as
+   `textContent`, never as markup.
+6. **Before release** — pairing auth, node supervision and Tor in the Rust shell, reproducible
+   builds, no-US distribution, and a full adversarial security audit.
 
 Details, threat model and the regulatory analysis live in the
 [implementation plan](https://github.com/bhanneke/crypto-onramp/blob/main/docs/IMPLEMENTATION_PLAN.md).
