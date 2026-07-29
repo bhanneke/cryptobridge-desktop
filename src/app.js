@@ -23,18 +23,31 @@ import { qrSvg } from './vendor/qr.js';
 // ---------------------------------------------------------------
 const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+/* Query params drive backend selection in browser dev (`?backend=bisq&node=…`).
+ * The packaged app loads index.html with no query string, so the same keys are
+ * also read from localStorage under `cryptobridge.<key>`. The mock stays the
+ * default in both: a real backend is never selected implicitly. A proper
+ * connect screen belongs with the offer-book work — this is the seam it writes to. */
+function setting(q, key) {
+  const fromQuery = q.get(key);
+  if (fromQuery) return fromQuery;
+  try {
+    return localStorage.getItem(`cryptobridge.${key}`) || null;
+  } catch {
+    return null; // storage can be denied; not a reason to fail startup
+  }
+}
+
 function createAdapter() {
   const q = new URLSearchParams(location.search);
-  if (q.get('backend') === 'bisq') {
+  if (setting(q, 'backend') === 'bisq') {
     try {
-      const wallet = new ExternalWallet({
-        address: q.get('addr') || undefined,
-        network: q.get('network') || 'mainnet',
-      });
+      const network = setting(q, 'network') || 'mainnet';
+      const wallet = new ExternalWallet({ address: setting(q, 'addr') || undefined, network });
       return new BisqAdapter({
-        restBaseUrl: q.get('node') || undefined,
-        wsUrl: q.get('ws') || undefined,
-        network: q.get('network') || 'mainnet',
+        restBaseUrl: setting(q, 'node') || undefined,
+        wsUrl: setting(q, 'ws') || undefined,
+        network,
         wallet,
       });
     } catch (err) {

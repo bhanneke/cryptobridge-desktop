@@ -16,9 +16,11 @@ a pluggable `OnrampAdapter` with a working mock backend, so the UI is real befor
 
 </div>
 
-> **Status: scaffold.** The UI, the adapter interface and the mock backend work end to end
-> (unit + e2e tested). No real trading backend is connected yet — that is the next milestone.
-> No real money moves.
+> **Status: pre-release.** A real Bisq 2 backend is wired in and live-verified — a full
+> buyer-side BTC/EUR trade runs end to end through the adapter, and inside the desktop app every
+> byte of that traffic goes through the Rust shell so the webview keeps `connect-src 'self'`.
+> What is *not* done: the default UI is still the prototype's demo (bank picker, art, yield),
+> and pairing auth is unimplemented. Do not point this at mainnet. No real money has moved.
 
 ## What this is
 
@@ -33,11 +35,16 @@ The load-bearing piece is the adapter seam:
 
 ```mermaid
 flowchart LR
-    UI["Webview UI<br/>(ported CryptoBridge design,<br/>plain HTML/CSS/JS)"] --> A["OnrampAdapter<br/>(interface)"]
-    A --> M["MockAdapter<br/>(in-memory, today)"]
-    A -.-> B["BisqAdapter<br/>(local Bisq daemon<br/>via localhost gRPC, next)"]
-    subgraph Tauri shell
+    UI["Webview UI<br/>(plain HTML/CSS/JS)"] --> A["OnrampAdapter<br/>(interface)"]
+    A --> M["MockAdapter<br/>(in-memory)"]
+    A --> B["BisqAdapter"]
+    B --> T["Transport<br/>(seam)"]
+    T -. "browser dev" .-> W["fetch + WebSocket"]
+    T --> P["Rust proxy<br/>loopback allowlist"]
+    P --> N["Bisq 2 node<br/>127.0.0.1, REST + WS"]
+    subgraph shell ["Tauri shell — connect-src 'self'"]
         UI
+        P
     end
 ```
 
@@ -68,8 +75,19 @@ npm run build      # signed-nothing local bundle (dmg/app on macOS, etc.)
 **Tests:**
 
 ```bash
-npm test           # adapter unit tests (node:test, no deps)
+npm test           # adapter + transport + QR unit tests (node:test, no deps)
 npm run test:e2e   # full-flow Playwright smoke against the system Chrome
+cargo test --manifest-path src-tauri/Cargo.toml   # loopback-proxy allowlist + live transport
+```
+
+The Bisq backend additionally has a live contract test against a real node, gated on an env var
+so it no-ops in CI — see [`spike/bisq2/README.md`](spike/bisq2/README.md) for the local network:
+
+```bash
+BISQ_API_URL=http://127.0.0.1:8091/api/v1 BISQ_SELLER_URL=http://127.0.0.1:8090/api/v1 \
+  node tests/bisq-adapter.contract.js               # full buyer-side trade through the adapter
+BISQ_API_URL=http://127.0.0.1:8090/api/v1 \
+  cargo test --manifest-path src-tauri/Cargo.toml -- --nocapture live_bisq   # REST + WS via the proxy
 ```
 
 ## Where the trust boundaries are
@@ -80,13 +98,15 @@ Ground rules from the plan, enforced by construction here:
 |---|---|
 | No custody | Wallet is the user's; adapter exposes balance/withdraw of *their* keys |
 | No fiat handling | Fiat leg is described (`getPaymentInstructions` → IBAN + EPC QR), never executed |
-| No server in the trade path | Static webview + local adapter; strict CSP, `connect-src 'self'` |
+| No server in the trade path | Static webview + local adapter. The webview cannot open a socket at all — `connect-src` stays `'self'` and Bisq traffic crosses IPC to a Rust proxy pinned to loopback ([`proxy.rs`](src-tauri/src/proxy.rs)) |
 | No CDN / phone-home | Fonts vendored ([`src/vendor`](src/vendor)), Tailwind compiled to a static file |
 | Open source | AGPL-3.0, same family as Bisq |
 
 The bank-connect steps (2–3) and the explore endgame (art, yield, swap) are **demo fiction
-carried over from the prototype** — kept because they demo well, clearly marked in the code,
-and scheduled to be replaced by the real offer-book and payment screens.
+carried over from the prototype** — clearly marked in the code, and next in line to be replaced
+by the real offer book. The fiat leg is no longer among them: it is a real payment screen. Note
+that the yield/APY screens sit awkwardly against the plan's own bright lines, which is the main
+reason they are scheduled to go rather than to be finished.
 
 ## Project structure
 
@@ -97,11 +117,16 @@ and scheduled to be replaced by the real offer-book and payment screens.
 │   ├── app.js                # UI layer, routed through the adapter
 │   ├── adapters/
 │   │   ├── onramp-adapter.js # THE interface (+ TradeState)
-│   │   └── mock-adapter.js   # in-memory backend used today
+│   │   ├── mock-adapter.js   # in-memory backend, the default
+│   │   ├── bisq-adapter.js   # real backend: Bisq 2 REST + WebSocket
+│   │   ├── transport.js      # I/O seam: Tauri IPC in the app, fetch/WS in a browser
+│   │   ├── wallet.js         # external-wallet seam + bech32/bech32m validation
+│   │   └── epc.js            # EPC069-12 (GiroCode) payloads, SEPA parsing
 │   ├── styles.css            # component layer
 │   ├── tailwind.css          # compiled — regenerate via `npm run build:css`
-│   └── vendor/fonts/         # Inter, JetBrains Mono, Material Symbols (subsetted)
-├── src-tauri/                # Tauri 2 shell (deliberately thin, no custom IPC yet)
+│   └── vendor/               # subsetted fonts + the dependency-free QR encoder
+├── src-tauri/                # Tauri 2 shell
+│   └── src/proxy.rs          # the loopback allowlist — start audits here
 ├── tests/                    # node:test unit tests + Playwright e2e
 └── build/tailwind.input.css  # Tailwind v4 theme (design tokens)
 ```
@@ -119,15 +144,28 @@ and scheduled to be replaced by the real offer-book and payment screens.
    `OFFER_TAKEN → … → COMPLETE` through the adapter against a live local network
    ([`tests/bisq-adapter.contract.js`](tests/bisq-adapter.contract.js)); pure logic is unit-tested
    in CI ([`tests/bisq-adapter.test.js`](tests/bisq-adapter.test.js)). Select it with
-   `?backend=bisq&node=…&addr=…`. Remaining before release: pairing auth + the payment screen (below).
+   `?backend=bisq&node=…&addr=…` in a browser, or — since the packaged app has no query string —
+   the same keys in `localStorage` as `cryptobridge.backend`, `cryptobridge.node`,
+   `cryptobridge.addr`, `cryptobridge.network`. The mock stays the default in both; a real
+   backend is never selected implicitly, and a proper connect screen comes with the offer book. Remaining before release: pairing auth + the payment screen (below).
 3. ~~**Payment screen**~~ **Done (2026-07-24)** — the trade now pauses at the fiat leg and shows a
    real payment screen: seller IBAN + a **scannable EPC069-12 GiroCode QR** (dependency-free encoder
    in [`src/vendor/qr.js`](src/vendor/qr.js), verified by decoding every output with OpenCV),
    Verification-of-Payee guidance, an honest "reputation, not multisig" trust note, and a manual
    **"I received the bitcoin"** step for non-custodial backends (external-wallet mode never
    auto-asserts receipt). Replaces the demo's instant-pay shortcut.
-4. **Replace demo fiction** — offer book instead of bank picker; drop yield/art or move them
-   behind a "demo" flag. Then: pairing auth, Tor + node supervision in the Rust shell.
+4. ~~**Tauri IPC transport**~~ **Done (2026-07-24)** — the packaged app could not reach a node at
+   all before this: `connect-src` is `'self'`, so the webview's `fetch`/`WebSocket` to
+   `127.0.0.1` were blocked, and the Rust shell had no commands. Bisq traffic now crosses IPC to
+   a proxy in [`src-tauri/src/proxy.rs`](src-tauri/src/proxy.rs) that is **pinned to literal
+   loopback IPs** (hostnames including `localhost` are refused, so no name resolution and no DNS
+   rebinding), restricted to `/api/v1/…` and `/websocket`, follows no redirects, and has **no TLS
+   backend compiled in** — CI fails if one ever enters the dependency tree. The JS side is a
+   transport seam ([`src/adapters/transport.js`](src/adapters/transport.js)) so the same adapter
+   runs over `fetch`/`WebSocket` in a browser and over IPC in the app. The CSP was not widened.
+5. **Replace demo fiction** — offer book instead of bank picker; drop yield/art or move them
+   behind a "demo" flag. Then: pairing auth, node supervision and Tor in the Rust shell,
+   reproducible builds, and a full adversarial security audit.
 
 Details, threat model and the regulatory analysis live in the
 [implementation plan](https://github.com/bhanneke/crypto-onramp/blob/main/docs/IMPLEMENTATION_PLAN.md).

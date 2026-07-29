@@ -6,8 +6,11 @@
  * for the design. It never holds fiat and, in external-wallet mode, never holds
  * keys.
  *
- * Runtime: uses global fetch + WebSocket (present in the Tauri webview and in
- * Node ≥ 18/22), so the same file backs the app and the contract test.
+ * Runtime: all I/O goes through a Transport (see transport.js). In a browser or
+ * in Node ≥ 18 that is global fetch + WebSocket; inside the packaged app it is
+ * Tauri IPC to the Rust shell, because the CSP holds `connect-src` at 'self'
+ * and the webview may not open a socket to 127.0.0.1 itself. Same file backs
+ * the app, the browser dev server and the contract test.
  *
  * Trust/verification model to keep honest:
  *  - BTC delivery is to a buyer-supplied address (wallet seam), non-custodial.
@@ -19,6 +22,7 @@
 
 import { OnrampAdapter, TradeState } from './onramp-adapter.js';
 import { epcPayload, parseSepaAccountData } from './epc.js';
+import { pickTransport } from './transport.js';
 
 /** Bisq `tradeState` (compound names — match by substring) → our TradeState.
  *  Verified against the buyer-side sequence captured in the spike. */
@@ -55,6 +59,8 @@ export class BisqAdapter extends OnrampAdapter {
    * @param {string} [opts.nickName='cryptobridge']  identity nickname if one must be created
    * @param {boolean} [opts.autoConfirmBtcReceipt=false]  auto-send BTC_CONFIRMED+CLOSE_TRADE on release (tests/demo only)
    * @param {string} [opts.pairingCode]  present → authenticated remote-node mode (see auth note; not yet implemented)
+   * @param {import('./transport.js').WebTransport} [opts.transport]  I/O seam; defaults to
+   *        Tauri IPC inside the app and fetch/WebSocket elsewhere (see transport.js)
    */
   constructor({
     restBaseUrl = 'http://127.0.0.1:8090/api/v1',
@@ -64,11 +70,13 @@ export class BisqAdapter extends OnrampAdapter {
     nickName = 'cryptobridge',
     autoConfirmBtcReceipt = false,
     pairingCode,
+    transport,
   } = {}) {
     super();
     if (!wallet) throw new Error('BisqAdapter requires a wallet (see src/adapters/wallet.js)');
     this.rest = restBaseUrl.replace(/\/$/, '');
     this.wsUrl = wsUrl;
+    this.transport = transport ?? pickTransport();
     this.wallet = wallet;
     this.network = network;
     this.nickName = nickName;
@@ -103,19 +111,17 @@ export class BisqAdapter extends OnrampAdapter {
       // rather than send blind, unauthenticated-looking requests.
       throw new Error('BisqAdapter: authenticated (pairing) mode is not implemented yet — run against a loopback dev node without authorizationRequired');
     }
-    const headers = {};
-    if (body !== undefined) headers['content-type'] = 'application/json';
     let res;
     try {
-      res = await fetch(this.rest + path, {
+      res = await this.transport.request(
         method,
-        headers,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-      });
+        this.rest + path,
+        body !== undefined ? JSON.stringify(body) : undefined,
+      );
     } catch (e) {
       throw new Error(`Bisq node unreachable at ${this.rest} (${method} ${path}): ${e.message}`);
     }
-    const text = await res.text();
+    const text = res.body;
     let data;
     try { data = text ? JSON.parse(text) : null; } catch { data = text; }
     if (res.status >= 300) {
@@ -373,37 +379,48 @@ export class BisqAdapter extends OnrampAdapter {
   async withdraw(address, amountSats) { return this.wallet.withdraw(address, amountSats); }
 
   // --- WebSocket -------------------------------------------------------------
-  _openWs() {
-    return new Promise((resolve) => {
-      let settled = false;
-      let ws;
-      try { ws = new WebSocket(this.wsUrl); }
-      catch { this._setStatus('error'); resolve(); return; }
-      this.ws = ws;
-      ws.onopen = () => {
-        this.reconnectAttempts = 0;
-        // The "type" discriminator is REQUIRED — without it the server silently
-        // drops the subscription ("No service found").
-        ws.send(JSON.stringify({ type: 'SubscriptionRequest', requestId: 'sub-trades', topic: 'TRADES', parameter: null }));
-        ws.send(JSON.stringify({ type: 'SubscriptionRequest', requestId: 'sub-props', topic: 'TRADE_PROPERTIES', parameter: null }));
-        this._setStatus('connected');
-        if (!settled) { settled = true; resolve(); }
-      };
-      ws.onmessage = (e) => this._onWsFrame(String(e.data));
-      ws.onerror = () => { this._setStatus('error'); if (!settled) { settled = true; resolve(); } };
-      ws.onclose = () => {
-        this.ws = null;
-        if (this.closing) return;
-        this._setStatus('connecting');
-        this._scheduleReconnect();
-      };
-    });
+  /** Resolves once subscribed, or after scheduling a retry — never rejects, so
+   *  init() stays usable against a node that is not up yet. */
+  async _openWs() {
+    this.wsOpening = true;
+    let sock;
+    try {
+      sock = await this.transport.openSocket(this.wsUrl, {
+        onMessage: (raw) => this._onWsFrame(raw),
+        onError: () => this._setStatus('error'),
+        onClose: () => {
+          this.ws = null;
+          if (this.closing) return;
+          this._setStatus('connecting');
+          this._scheduleReconnect();
+        },
+      });
+    } catch {
+      this.wsOpening = false;
+      this._setStatus('error');
+      if (!this.closing) this._scheduleReconnect();
+      return;
+    }
+    this.wsOpening = false;
+
+    if (this.closing) { sock.close(); return; }   // closed while the handshake ran
+    this.ws = sock;
+    this.reconnectAttempts = 0;
+    // The "type" discriminator is REQUIRED — without it the server silently
+    // drops the subscription ("No service found").
+    sock.send(JSON.stringify({ type: 'SubscriptionRequest', requestId: 'sub-trades', topic: 'TRADES', parameter: null }));
+    sock.send(JSON.stringify({ type: 'SubscriptionRequest', requestId: 'sub-props', topic: 'TRADE_PROPERTIES', parameter: null }));
+    this._setStatus('connected');
   }
 
   _scheduleReconnect() {
     if (this.closing) return;
     const delay = Math.min(30000, 1000 * 2 ** this.reconnectAttempts++);
-    setTimeout(() => { if (!this.closing && !this.ws) this._openWs(); }, delay);
+    // `wsOpening` guards the window where a handshake is in flight but `ws` is
+    // not yet set, which would otherwise let a retry open a second socket.
+    setTimeout(() => {
+      if (!this.closing && !this.ws && !this.wsOpening) this._openWs();
+    }, delay);
   }
 
   _onWsFrame(raw) {
