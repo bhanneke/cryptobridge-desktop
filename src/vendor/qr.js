@@ -379,5 +379,11 @@ export function qrSvg(text, { quiet = 4, size = 232, dark = '#0b0b0f', light = '
       } else c++;
     }
   }
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${dim} ${dim}" role="img" aria-label="${title}" shape-rendering="crispEdges"><rect width="${dim}" height="${dim}" fill="${light}"/><g fill="${dark}">${rects}</g></svg>`;
+  // The QR *content* never reaches the markup — only the module matrix does —
+  // but the caller-supplied label and colours are interpolated into attributes,
+  // so escape them. Today all three are literals; this keeps it that way if a
+  // future caller passes something derived from a trade peer's text.
+  const attr = (v) => String(v).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${dim} ${dim}" role="img" aria-label="${attr(title)}" shape-rendering="crispEdges"><rect width="${dim}" height="${dim}" fill="${attr(light)}"/><g fill="${attr(dark)}">${rects}</g></svg>`;
 }

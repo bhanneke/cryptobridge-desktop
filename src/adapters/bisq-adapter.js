@@ -358,11 +358,23 @@ export class BisqAdapter extends OnrampAdapter {
   /** User confirms they see the BTC in their own wallet → close the Bisq trade.
    *  Not part of OnrampAdapter (the mock auto-completes); bisq needs an explicit
    *  step because we don't run a chain watcher in external-wallet mode. */
+  /** The user attests that the bitcoin arrived in their own wallet. In
+   *  external-wallet mode this is the authoritative signal — we cannot see the
+   *  chain — so it is also what unlocks COMPLETE (see the note in
+   *  _applyTradeDelta). Emitting here matters: the node may already have sent
+   *  its final state, which we held back, and it will not necessarily repeat
+   *  it, which would otherwise leave the UI waiting forever. */
   async confirmBtcReceived(tradeId) {
     if (this.btcReceiptSent.has(tradeId)) return;
     this.btcReceiptSent.add(tradeId);
-    await this._tradeEvent(tradeId, 'BTC_CONFIRMED');
-    await this._tradeEvent(tradeId, 'CLOSE_TRADE');
+    try {
+      await this._tradeEvent(tradeId, 'BTC_CONFIRMED');
+      await this._tradeEvent(tradeId, 'CLOSE_TRADE');
+    } catch (e) {
+      this.btcReceiptSent.delete(tradeId);   // let the user retry
+      throw e;
+    }
+    this._emitTrade(tradeId, TradeState.COMPLETE);
   }
 
   // --- wallet (delegated to the seam) ---------------------------------------
@@ -459,8 +471,20 @@ export class BisqAdapter extends OnrampAdapter {
       if (/TAKER_RECEIVED_TAKE_OFFER_RESPONSE/.test(delta.tradeState)) {
         this._maybeSendBtcAddress(tradeId);
       }
-      if (mapped) this._emitTrade(tradeId, mapped);
-      if (mapped === TradeState.BTC_RELEASED && this.autoConfirmBtcReceipt) {
+      // SECURITY (audit finding 3): COMPLETE asserts "the bitcoin arrived", and
+      // in external-wallet mode only the user can know that — we cannot see
+      // their wallet. A hostile peer or a lying node can put any tradeState on
+      // the wire, including one that maps straight to COMPLETE, which would
+      // make the UI declare success right after the user sent their euros.
+      // Hold the trade at BTC_RELEASED until confirmBtcReceived() has run.
+      let effective = mapped;
+      if (effective === TradeState.COMPLETE
+          && !this.autoConfirmBtcReceipt
+          && !this.btcReceiptSent.has(tradeId)) {
+        effective = TradeState.BTC_RELEASED;
+      }
+      if (effective) this._emitTrade(tradeId, effective);
+      if (effective === TradeState.BTC_RELEASED && this.autoConfirmBtcReceipt) {
         this.confirmBtcReceived(tradeId).catch(() => { /* surfaced via state stream */ });
       }
     }

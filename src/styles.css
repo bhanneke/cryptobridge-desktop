@@ -324,3 +324,18 @@ button:disabled { cursor: not-allowed; }
 }
 .custody-note .material-symbols-outlined { color: #5B6478; flex: none; margin-top: 1px; }
 .custody-note strong { color: #0B1220; }
+
+/* ---------- Seller's raw account text (payment screen) ---------- */
+.pay-raw { margin-top: 4px; font-size: 12px; color: #5B6478; }
+.pay-raw summary {
+  cursor: pointer; font-size: 12px; color: #5B6478;
+  padding: 4px 0; user-select: none;
+}
+.pay-raw summary:hover { color: #0B1220; }
+.pay-raw pre {
+  margin: 6px 0; padding: 10px 12px;
+  background: #F7F8FA; border: 1px solid #E6E8EE; border-radius: 10px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; line-height: 1.5;
+  color: #0B1220; white-space: pre-wrap; word-break: break-word;
+}
+.pay-raw p { font-size: 11px; color: #9AA3B2; line-height: 1.5; }

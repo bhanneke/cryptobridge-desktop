@@ -572,6 +572,17 @@ function presentPayment(tradeId, instr, amountEur) {
   if (instr.bic) { $('#payBic').textContent = instr.bic; bicRow.hidden = false; } else bicRow.hidden = true;
   const refRow = $('#payRefRow');
   if (instr.reference) { $('#payRef').textContent = instr.reference; refRow.hidden = false; } else refRow.hidden = true;
+  // The seller's raw text, verbatim and as text (never markup). The fields
+  // above are our parse of it; showing the source is what lets a user notice a
+  // seller who is playing games with it. See docs/SECURITY_AUDIT.md finding 1.
+  const rawWrap = $('#payRawWrap');
+  if (instr.rawAccountData) {
+    $('#payRaw').textContent = instr.rawAccountData;
+    rawWrap.hidden = false;
+  } else {
+    rawWrap.hidden = true;
+  }
+
   // GiroCode from the adapter's EPC069-12 payload — verified self-contained SVG.
   $('#payQr').innerHTML = instr.epcQrPayload ? qrSvg(instr.epcQrPayload, { size: 220 }) : '';
 
