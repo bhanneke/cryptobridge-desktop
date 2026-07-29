@@ -7,12 +7,43 @@
 
 import { TradeState } from './adapters/onramp-adapter.js';
 import { MockAdapter } from './adapters/mock-adapter.js';
+import { BisqAdapter } from './adapters/bisq-adapter.js';
+import { ExternalWallet } from './adapters/wallet.js';
 
 // ---------------------------------------------------------------
-// Backend adapter — swap MockAdapter for BisqAdapter when it exists.
+// Backend adapter — mock by default; opt into a real Bisq 2 node with
+//   ?backend=bisq&node=http://127.0.0.1:8090/api/v1&addr=<your BTC address>[&network=regtest]
+// External-wallet mode: `addr` is a receive address from your own wallet — we
+// hold no keys. NOTE: talking to a node from the Tauri build needs the node's
+// origin added to the CSP in src-tauri/tauri.conf.json (or routing via Rust
+// IPC); the plain-browser dev server has no CSP, so this works there today.
+// The full bisq trade UX (payment screen, manual BTC-receipt confirm) is the
+// next milestone — see docs/BISQADAPTER_PLAN.md.
 // ---------------------------------------------------------------
 const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-const adapter = new MockAdapter({ latencyScale: reducedMotion() ? 0.2 : 1 });
+
+function createAdapter() {
+  const q = new URLSearchParams(location.search);
+  if (q.get('backend') === 'bisq') {
+    try {
+      const wallet = new ExternalWallet({
+        address: q.get('addr') || undefined,
+        network: q.get('network') || 'mainnet',
+      });
+      return new BisqAdapter({
+        restBaseUrl: q.get('node') || undefined,
+        wsUrl: q.get('ws') || undefined,
+        network: q.get('network') || 'mainnet',
+        wallet,
+      });
+    } catch (err) {
+      console.error('bisq backend not usable, falling back to mock:', err.message);
+    }
+  }
+  return new MockAdapter({ latencyScale: reducedMotion() ? 0.2 : 1 });
+}
+
+const adapter = createAdapter();
 
 // ---------------------------------------------------------------
 // State
@@ -907,7 +938,7 @@ function applyDeepLink() {
     state.bankAmount = state.selectedBalance * 0.6;
     state.cryptoBalance = state.bridgedAmount;
     state.selectedBalance = state.bankAmount;
-    adapter.seedWallet(state.cryptoBalance);   // keep the sats view consistent
+    adapter.seedWallet?.(state.cryptoBalance);  // mock-only helper; keeps the sats view consistent
   }
   setStep(target);
   if (target === 4) {
