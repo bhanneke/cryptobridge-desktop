@@ -1,0 +1,2075 @@
+[
+ {
+  "node": "seller",
+  "method": "GET",
+  "path": "/user-identities/ids",
+  "request": null,
+  "status": 200,
+  "response": [
+   "1aac1dcd1cc476269c2f83efa352a6aff6849fac"
+  ]
+ },
+ {
+  "node": "buyer",
+  "method": "GET",
+  "path": "/user-identities/ids",
+  "request": null,
+  "status": 200,
+  "response": [
+   "0fefe34f337476c6596e1735b090e8d713c6988c"
+  ]
+ },
+ {
+  "node": "seller",
+  "method": "POST",
+  "path": "/payment-accounts",
+  "request": {
+   "accountName": "Spike SEPA",
+   "paymentRail": "SEPA",
+   "accountPayload": {
+    "selectedCountryCode": "DE",
+    "acceptedCountryCodes": [
+     "DE",
+     "AT",
+     "FR",
+     "NL",
+     "ES",
+     "IT"
+    ],
+    "holderName": "Alice Spike",
+    "iban": "DE02120300000000202051",
+    "bic": "BYLADEM1001"
+   }
+  },
+  "status": 201,
+  "response": {
+   "accountName": "Spike SEPA",
+   "paymentRail": "SEPA",
+   "accountPayload": {
+    "chargebackRisk": "MODERATE",
+    "paymentMethodName": "SEPA",
+    "currency": {
+     "code": "EUR",
+     "name": "Euro"
+    },
+    "country": {
+     "code": "DE",
+     "name": "Germany"
+    },
+    "acceptedCountries": [
+     {
+      "code": "DE",
+      "name": "Germany"
+     },
+     {
+      "code": "AT",
+      "name": "Austria"
+     },
+     {
+      "code": "FR",
+      "name": "France"
+     },
+     {
+      "code": "NL",
+      "name": "Netherlands"
+     },
+     {
+      "code": "ES",
+      "name": "Spain"
+     },
+     {
+      "code": "IT",
+      "name": "Italy"
+     }
+    ],
+    "holderName": "Alice Spike",
+    "iban": "DE02120300000000202051",
+    "bic": "BYLADEM1001"
+   },
+   "creationDate": "Jul 19, 2026",
+   "tradeLimitInfo": "5000.00",
+   "tradeDuration": "6 days"
+  }
+ },
+ {
+  "node": "seller",
+  "method": "POST",
+  "path": "/offerbook/offers",
+  "request": {
+   "direction": "SELL",
+   "market": {
+    "baseCurrencyCode": "BTC",
+    "quoteCurrencyCode": "EUR",
+    "baseCurrencyName": "Bitcoin",
+    "quoteCurrencyName": "Euro"
+   },
+   "bitcoinPaymentMethods": [
+    "MAIN_CHAIN"
+   ],
+   "fiatPaymentMethods": [
+    "SEPA"
+   ],
+   "amountSpec": {
+    "type": "QuoteSideFixedAmountSpec",
+    "amount": 500000
+   },
+   "priceSpec": {
+    "type": "MarketPriceSpec"
+   },
+   "supportedLanguageCodes": [
+    "en"
+   ]
+  },
+  "status": 201,
+  "response": {
+   "offerId": "767ac762-11d5-4f32-afa1-5c5f305117a6"
+  }
+ },
+ {
+  "node": "buyer",
+  "method": "GET",
+  "path": "/offerbook/markets/EUR/offers",
+  "request": null,
+  "status": 200,
+  "response": []
+ },
+ {
+  "node": "buyer",
+  "method": "GET",
+  "path": "/offerbook/markets/EUR/offers",
+  "request": null,
+  "status": 200,
+  "response": [
+   {
+    "bisqEasyOffer": {
+     "id": "767ac762-11d5-4f32-afa1-5c5f305117a6",
+     "date": 1784496590603,
+     "makerNetworkId": {
+      "addressByTransportTypeMap": {
+       "map": {
+        "CLEAR": {
+         "host": "127.0.0.1",
+         "port": 55309
+        }
+       }
+      },
+      "pubKey": {
+       "publicKey": {
+        "encoded": "MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAE4NUkiW1cgMkvxg90A/IHuqldfRHPIkS2vJ0Z+ls1N+Mnf5PXN/eTtQv8i6xtlT7koxUHl7XD2pE2b3iFPAw2rA=="
+       },
+       "keyId": "aa25587a97f88fbb80c0699fdb827df8ebb4b021",
+       "hash": "GqwdzRzEdiacL4Pvo1Kmr/aEn6w=",
+       "id": "1aac1dcd1cc476269c2f83efa352a6aff6849fac"
+      }
+     },
+     "direction": "SELL",
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "EUR",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Euro"
+     },
+     "amountSpec": {
+      "type": "QuoteSideFixedAmountSpec",
+      "amount": 500000
+     },
+     "priceSpec": {
+      "type": "MarketPriceSpec"
+     },
+     "protocolTypes": [
+      "BISQ_EASY"
+     ],
+     "baseSidePaymentMethodSpecs": [
+      {
+       "type": "BitcoinPaymentMethodSpec",
+       "paymentMethod": "MAIN_CHAIN",
+       "saltedMakerAccountId": null
+      }
+     ],
+     "quoteSidePaymentMethodSpecs": [
+      {
+       "type": "FiatPaymentMethodSpec",
+       "paymentMethod": "SEPA",
+       "saltedMakerAccountId": null
+      }
+     ],
+     "offerOptions": [
+      {
+       "type": "ReputationOption",
+       "requiredTotalReputationScore": 30000
+      }
+     ],
+     "supportedLanguageCodes": [
+      "en"
+     ],
+     "version": 0,
+     "tradeProtocolVersion": "1.0.0",
+     "appVersion": "2.1.11"
+    },
+    "isMyOffer": false,
+    "userProfile": {
+     "version": 1,
+     "nickName": "spike_seller",
+     "proofOfWork": {
+      "payloadEncoded": "GqwdzRzEdiacL4Pvo1Kmr/aEn6w=",
+      "counter": 57552,
+      "challengeEncoded": null,
+      "difficulty": 65536,
+      "solutionEncoded": "AAAAAAAA4NA=",
+      "duration": 7
+     },
+     "avatarVersion": 0,
+     "networkId": {
+      "addressByTransportTypeMap": {
+       "map": {
+        "CLEAR": {
+         "host": "127.0.0.1",
+         "port": 55309
+        }
+       }
+      },
+      "pubKey": {
+       "publicKey": {
+        "encoded": "MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAE4NUkiW1cgMkvxg90A/IHuqldfRHPIkS2vJ0Z+ls1N+Mnf5PXN/eTtQv8i6xtlT7koxUHl7XD2pE2b3iFPAw2rA=="
+       },
+       "keyId": "aa25587a97f88fbb80c0699fdb827df8ebb4b021",
+       "hash": "GqwdzRzEdiacL4Pvo1Kmr/aEn6w=",
+       "id": "1aac1dcd1cc476269c2f83efa352a6aff6849fac"
+      }
+     },
+     "terms": "",
+     "statement": "",
+     "applicationVersion": "2.1.11",
+     "nym": "Kindly-Fetid-Telegrapher-772",
+     "userName": "spike_seller",
+     "publishDate": 1784495314708
+    },
+    "formattedDate": "Jul 19, 2026 at 11:29 PM",
+    "formattedQuoteAmount": "50.00 EUR",
+    "formattedBaseAmount": "0.00088699 BTC",
+    "formattedPrice": "56370.47",
+    "formattedPriceSpec": "Market price",
+    "quoteSidePaymentMethods": [
+     "SEPA"
+    ],
+    "baseSidePaymentMethods": [
+     "MAIN_CHAIN"
+    ],
+    "reputationScore": {
+     "totalScore": 0,
+     "fiveSystemScore": 0,
+     "ranking": 0
+    }
+   }
+  ]
+ },
+ {
+  "node": "buyer",
+  "method": "GET",
+  "path": "/market-price/quotes",
+  "request": null,
+  "status": 200,
+  "response": {
+   "quotes": {
+    "CHF": {
+     "value": 520961460,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "CHF",
+      "value": 520961460,
+      "code": "CHF",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "CHF",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Swiss Franc"
+     }
+    },
+    "MXN": {
+     "value": 11303916354,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "MXN",
+      "value": 11303916354,
+      "code": "MXN",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "MXN",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Mexican Peso"
+     }
+    },
+    "ZMW": {
+     "value": 11726788200,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "ZMW",
+      "value": 11726788200,
+      "code": "ZMW",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "ZMW",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Zambian Kwacha"
+     }
+    },
+    "GTQ": {
+     "value": 4909202110,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "GTQ",
+      "value": 4909202110,
+      "code": "GTQ",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "GTQ",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Guatemalan Quetzal"
+     }
+    },
+    "CLP": {
+     "value": 598957376700,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "CLP",
+      "value": 598957376700,
+      "code": "CLP",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "CLP",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Chilean Peso"
+     }
+    },
+    "HNL": {
+     "value": 17232325030,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "HNL",
+      "value": 17232325030,
+      "code": "HNL",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "HNL",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Honduran Lempira"
+     }
+    },
+    "ZAR": {
+     "value": 10689585840,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "ZAR",
+      "value": 10689585840,
+      "code": "ZAR",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "ZAR",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "South African Rand"
+     }
+    },
+    "VND": {
+     "value": 16939974328270,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "VND",
+      "value": 16939974328270,
+      "code": "VND",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "VND",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Vietnamese Dong"
+     }
+    },
+    "AUD": {
+     "value": 925183440,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "AUD",
+      "value": 925183440,
+      "code": "AUD",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "AUD",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Australian Dollar"
+     }
+    },
+    "ILS": {
+     "value": 1956820860,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "ILS",
+      "value": 1956820860,
+      "code": "ILS",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "ILS",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Israeli New Shekel"
+     }
+    },
+    "BOB": {
+     "value": 6912624520,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "BOB",
+      "value": 6912624520,
+      "code": "BOB",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "BOB",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Bolivian Boliviano"
+     }
+    },
+    "IDR": {
+     "value": 11574664362250,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "IDR",
+      "value": 11574664362250,
+      "code": "IDR",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "IDR",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Indonesian Rupiah"
+     }
+    },
+    "AMD": {
+     "value": 235390933150,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "AMD",
+      "value": 235390933150,
+      "code": "AMD",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "AMD",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Armenian Dram"
+     }
+    },
+    "TRY": {
+     "value": 30379990379,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "TRY",
+      "value": 30379990379,
+      "code": "TRY",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "TRY",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Turkish Lira"
+     }
+    },
+    "LBP": {
+     "value": 57268394112703,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "LBP",
+      "value": 57268394112703,
+      "code": "LBP",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "LBP",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Lebanese Pound"
+     }
+    },
+    "TWD": {
+     "value": 20879029380,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "TWD",
+      "value": 20879029380,
+      "code": "TWD",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "TWD",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "New Taiwan Dollar"
+     }
+    },
+    "AED": {
+     "value": 2365924470,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "AED",
+      "value": 2365924470,
+      "code": "AED",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "AED",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "United Arab Emirates Dirham"
+     }
+    },
+    "HKD": {
+     "value": 5051031330,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "HKD",
+      "value": 5051031330,
+      "code": "HKD",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "HKD",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Hong Kong Dollar"
+     }
+    },
+    "EUR": {
+     "value": 563704727,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "EUR",
+      "value": 563704727,
+      "code": "EUR",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "EUR",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Euro"
+     }
+    },
+    "DOP": {
+     "value": 37964138167,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "DOP",
+      "value": 37964138167,
+      "code": "DOP",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "DOP",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Dominican Peso"
+     }
+    },
+    "DKK": {
+     "value": 4213481180,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "DKK",
+      "value": 4213481180,
+      "code": "DKK",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "DKK",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Danish Krone"
+     }
+    },
+    "MYR": {
+     "value": 2640980139,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "MYR",
+      "value": 2640980139,
+      "code": "MYR",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "MYR",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Malaysian Ringgit"
+     }
+    },
+    "CAD": {
+     "value": 903661280,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "CAD",
+      "value": 903661280,
+      "code": "CAD",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "CAD",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Canadian Dollar"
+     }
+    },
+    "MMK": {
+     "value": 1352754766620,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "MMK",
+      "value": 1352754766620,
+      "code": "MMK",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "MMK",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Myanmar Kyat"
+     }
+    },
+    "NOK": {
+     "value": 6319550170,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "NOK",
+      "value": 6319550170,
+      "code": "NOK",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "NOK",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Norwegian Krone"
+     }
+    },
+    "GEL": {
+     "value": 1691851490,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "GEL",
+      "value": 1691851490,
+      "code": "GEL",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "GEL",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Georgian Lari"
+     }
+    },
+    "RON": {
+     "value": 2945613000,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "RON",
+      "value": 2945613000,
+      "code": "RON",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "RON",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Romanian Leu"
+     }
+    },
+    "LKR": {
+     "value": 216234522970,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "LKR",
+      "value": 216234522970,
+      "code": "LKR",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "LKR",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Sri Lankan Rupee"
+     }
+    },
+    "NGN": {
+     "value": 893358125915,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "NGN",
+      "value": 893358125915,
+      "code": "NGN",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "NGN",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Nigerian Naira"
+     }
+    },
+    "CRC": {
+     "value": 292029350060,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "CRC",
+      "value": 292029350060,
+      "code": "CRC",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "CRC",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Costa Rican Col\u00f3n"
+     }
+    },
+    "CZK": {
+     "value": 13652495530,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "CZK",
+      "value": 13652495530,
+      "code": "CZK",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "CZK",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Czech Koruna"
+     }
+    },
+    "PKR": {
+     "value": 178912082030,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "PKR",
+      "value": 178912082030,
+      "code": "PKR",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "PKR",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Pakistani Rupee"
+     }
+    },
+    "KES": {
+     "value": 83158961980,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "KES",
+      "value": 83158961980,
+      "code": "KES",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "KES",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Kenyan Shilling"
+     }
+    },
+    "SEK": {
+     "value": 6216905440,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "SEK",
+      "value": 6216905440,
+      "code": "SEK",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "SEK",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Swedish Krona"
+     }
+    },
+    "UAH": {
+     "value": 28742090640,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "UAH",
+      "value": 28742090640,
+      "code": "UAH",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "UAH",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Ukrainian Hryvnia"
+     }
+    },
+    "BHD": {
+     "value": 242644310,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "BHD",
+      "value": 242644310,
+      "code": "BHD",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "BHD",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Bahraini Dinar"
+     }
+    },
+    "SVC": {
+     "value": 5629984780,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "SVC",
+      "value": 5629984780,
+      "code": "SVC",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "SVC",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Salvadoran Col\u00f3n"
+     }
+    },
+    "ARS": {
+     "value": 1024341183275,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "ARS",
+      "value": 1024341183275,
+      "code": "ARS",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "ARS",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Argentine Peso"
+     }
+    },
+    "SAR": {
+     "value": 2418136510,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "SAR",
+      "value": 2418136510,
+      "code": "SAR",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "SAR",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Saudi Riyal"
+     }
+    },
+    "INR": {
+     "value": 62106619200,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "INR",
+      "value": 62106619200,
+      "code": "INR",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "INR",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Indian Rupee"
+     }
+    },
+    "CNY": {
+     "value": 4363512040,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "CNY",
+      "value": 4363512040,
+      "code": "CNY",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "CNY",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Chinese Yuan"
+     }
+    },
+    "THB": {
+     "value": 21663056480,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "THB",
+      "value": 21663056480,
+      "code": "THB",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "THB",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Thai Baht"
+     }
+    },
+    "KRW": {
+     "value": 953526538925,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "KRW",
+      "value": 953526538925,
+      "code": "KRW",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "KRW",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "South Korean Won"
+     }
+    },
+    "JPY": {
+     "value": 104679497336,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "JPY",
+      "value": 104679497336,
+      "code": "JPY",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "JPY",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Japanese Yen"
+     }
+    },
+    "BDT": {
+     "value": 79319828180,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "BDT",
+      "value": 79319828180,
+      "code": "BDT",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "BDT",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Bangladeshi Taka"
+     }
+    },
+    "PLN": {
+     "value": 2446971480,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "PLN",
+      "value": 2446971480,
+      "code": "PLN",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "PLN",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Polish Zloty"
+     }
+    },
+    "GBP": {
+     "value": 479678050,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "GBP",
+      "value": 479678050,
+      "code": "GBP",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "GBP",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "British Pound"
+     }
+    },
+    "BMD": {
+     "value": 644227220,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "BMD",
+      "value": 644227220,
+      "code": "BMD",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "BMD",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Bermudan Dollar"
+     }
+    },
+    "HUF": {
+     "value": 204389461670,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "HUF",
+      "value": 204389461670,
+      "code": "HUF",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "HUF",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Hungarian Forint"
+     }
+    },
+    "KWD": {
+     "value": 199000500,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "KWD",
+      "value": 199000500,
+      "code": "KWD",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "KWD",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Kuwaiti Dinar"
+     }
+    },
+    "PHP": {
+     "value": 39722836080,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "PHP",
+      "value": 39722836080,
+      "code": "PHP",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "PHP",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Philippine Peso"
+     }
+    },
+    "RUB": {
+     "value": 50478556820,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "RUB",
+      "value": 50478556820,
+      "code": "RUB",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "RUB",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Russian Ruble"
+     }
+    },
+    "PYG": {
+     "value": 3890060161644,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "PYG",
+      "value": 3890060161644,
+      "code": "PYG",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "PYG",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Paraguayan Guarani"
+     }
+    },
+    "COP": {
+     "value": 2078779998560,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "COP",
+      "value": 2078779998560,
+      "code": "COP",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "COP",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Colombian Peso"
+     }
+    },
+    "USD": {
+     "value": 644310605,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "USD",
+      "value": 644310605,
+      "code": "USD",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "USD",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "US Dollar"
+     }
+    },
+    "BAM": {
+     "value": 1101332850,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "BAM",
+      "value": 1101332850,
+      "code": "BAM",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "BAM",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Bosnia-Herzegovina Convertible Mark"
+     }
+    },
+    "EGP": {
+     "value": 33298258281,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "EGP",
+      "value": 33298258281,
+      "code": "EGP",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "EGP",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Egyptian Pound"
+     }
+    },
+    "SGD": {
+     "value": 831774650,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "SGD",
+      "value": 831774650,
+      "code": "SGD",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "SGD",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Singapore Dollar"
+     }
+    },
+    "ETB": {
+     "value": 116699982658,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "ETB",
+      "value": 116699982658,
+      "code": "ETB",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "ETB",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Ethiopian Birr"
+     }
+    },
+    "PEN": {
+     "value": 2182674680,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "PEN",
+      "value": 2182674680,
+      "code": "PEN",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "PEN",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Peruvian Sol"
+     }
+    },
+    "NZD": {
+     "value": 1101562195,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "NZD",
+      "value": 1101562195,
+      "code": "NZD",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "NZD",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "New Zealand Dollar"
+     }
+    },
+    "BRL": {
+     "value": 3328851666,
+     "baseSideMonetary": {
+      "type": "Coin",
+      "id": "BTC [crypto]",
+      "value": 100000000,
+      "code": "BTC",
+      "precision": 8,
+      "lowPrecision": 4
+     },
+     "quoteSideMonetary": {
+      "type": "Fiat",
+      "id": "BRL",
+      "value": 3328851666,
+      "code": "BRL",
+      "precision": 4,
+      "lowPrecision": 2
+     },
+     "precision": 4,
+     "lowPrecision": 2,
+     "market": {
+      "baseCurrencyCode": "BTC",
+      "quoteCurrencyCode": "BRL",
+      "baseCurrencyName": "Bitcoin",
+      "quoteCurrencyName": "Brazilian Real"
+     }
+    }
+   }
+  }
+ },
+ {
+  "node": "buyer",
+  "method": "POST",
+  "path": "/trades",
+  "request": {
+   "offerId": "767ac762-11d5-4f32-afa1-5c5f305117a6",
+   "baseSideAmount": 88699,
+   "quoteSideAmount": 500000,
+   "bitcoinPaymentMethod": "MAIN_CHAIN",
+   "fiatPaymentMethod": "SEPA"
+  },
+  "status": 201,
+  "response": {
+   "tradeId": "bc7f566d-b659-3a83-b455-d4e8f4e94f94"
+  }
+ },
+ {
+  "node": "seller",
+  "method": "PATCH",
+  "path": "/trades/bc7f566d-b659-3a83-b455-d4e8f4e94f94/event",
+  "request": {
+   "tradeEventType": "SELLER_SENDS_PAYMENT_ACCOUNT",
+   "data": "Alice Spike, IBAN DE02 1203 0000 0000 2020 51 (SEPA)"
+  },
+  "status": 204,
+  "response": null
+ },
+ {
+  "node": "buyer",
+  "method": "PATCH",
+  "path": "/trades/bc7f566d-b659-3a83-b455-d4e8f4e94f94/event",
+  "request": {
+   "tradeEventType": "BUYER_SEND_BITCOIN_PAYMENT_DATA",
+   "data": "bcrt1qspikebuyerdestinationaddress000000000"
+  },
+  "status": 204,
+  "response": null
+ },
+ {
+  "node": "buyer",
+  "method": "PATCH",
+  "path": "/trades/bc7f566d-b659-3a83-b455-d4e8f4e94f94/event",
+  "request": {
+   "tradeEventType": "BUYER_CONFIRM_FIAT_SENT",
+   "data": null
+  },
+  "status": 204,
+  "response": null
+ },
+ {
+  "node": "seller",
+  "method": "PATCH",
+  "path": "/trades/bc7f566d-b659-3a83-b455-d4e8f4e94f94/event",
+  "request": {
+   "tradeEventType": "SELLER_CONFIRM_FIAT_RECEIPT",
+   "data": null
+  },
+  "status": 204,
+  "response": null
+ },
+ {
+  "node": "seller",
+  "method": "PATCH",
+  "path": "/trades/bc7f566d-b659-3a83-b455-d4e8f4e94f94/event",
+  "request": {
+   "tradeEventType": "SELLER_CONFIRM_BTC_SENT",
+   "data": "f00dbabe00000000000000000000000000000000000000000000000000000000"
+  },
+  "status": 204,
+  "response": null
+ },
+ {
+  "node": "buyer",
+  "method": "PATCH",
+  "path": "/trades/bc7f566d-b659-3a83-b455-d4e8f4e94f94/event",
+  "request": {
+   "tradeEventType": "BTC_CONFIRMED",
+   "data": null
+  },
+  "status": 204,
+  "response": null
+ },
+ {
+  "node": "buyer",
+  "method": "PATCH",
+  "path": "/trades/bc7f566d-b659-3a83-b455-d4e8f4e94f94/event",
+  "request": {
+   "tradeEventType": "CLOSE_TRADE",
+   "data": null
+  },
+  "status": 204,
+  "response": null
+ },
+ {
+  "node": "seller",
+  "method": "PATCH",
+  "path": "/trades/bc7f566d-b659-3a83-b455-d4e8f4e94f94/event",
+  "request": {
+   "tradeEventType": "CLOSE_TRADE",
+   "data": null
+  },
+  "status": 204,
+  "response": null
+ },
+ {
+  "wsFrameCount": 17,
+  "tradeRelatedFrames": [
+   "{\"type\":\"WebSocketEvent\",\"topic\":\"TRADE_PROPERTIES\",\"subscriberId\":\"sub-props\",\"payload\":\"[{\\\"bc7f566d-b659-3a83-b455-d4e8f4e94f94\\\":{\\\"tradeState\\\":\\\"INIT\\\"}}]\",\"modificationType\":\"REPLACE\",\"sequenceNumber\":1}",
+   "{\"type\":\"WebSocketEvent\",\"topic\":\"TRADE_PROPERTIES\",\"subscriberId\":\"sub-props\",\"payload\":\"[{\\\"bc7f566d-b659-3a83-b455-d4e8f4e94f94\\\":{\\\"tradeState\\\":\\\"TAKER_SENT_TAKE_OFFER_REQUEST\\\"}}]\",\"modificationType\":\"REPLACE\",\"sequenceNumber\":2}",
+   "{\"type\":\"WebSocketEvent\",\"topic\":\"TRADE_PROPERTIES\",\"subscriberId\":\"sub-props\",\"payload\":\"[{\\\"bc7f566d-b659-3a83-b455-d4e8f4e94f94\\\":{\\\"tradeState\\\":\\\"TAKER_RECEIVED_TAKE_OFFER_RESPONSE__BUYER_DID_NOT_SENT_BTC_ADDRESS__BUYER_DID_NOT_RECEIVED_ACCOUNT_DATA\\\"}}]\",\"modificationType\":\"REPLACE\",\"sequenceNumber\":3}",
+   "{\"type\":\"WebSocketEvent\",\"topic\":\"TRADES\",\"subscriberId\":\"sub-trades\",\"payload\":\"[{\\\"channel\\\":{\\\"id\\\":\\\"bisq_easy_open_trades.bc7f566d-b659-3a83-b455-d4e8f4e94f94\\\",\\\"tradeId\\\":\\\"bc7f566d-b659-3a83-b455-d4e8f4e94f94\\\",\\\"bisqEasyOffer\\\":{\\\"id\\\":\\\"767ac762-11d5-4f32-afa1-5c5f305117a6\\\",\\\"date\\\":1784496590603,\\\"makerNetworkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55309}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAE4NUkiW1cgMkvxg90A/IHuqldfRHPIkS2vJ0Z+ls1N+Mnf5PXN/eTtQv8i6xtlT7koxUHl7XD2pE2b3iFPAw2rA==\\\"},\\\"keyId\\\":\\\"aa25587a97f88fbb80c0699fdb827df8ebb4b021\\\",\\\"hash\\\":\\\"GqwdzRzEdiacL4Pvo1Kmr/aEn6w=\\\",\\\"id\\\":\\\"1aac1dcd1cc476269c2f83efa352a6aff6849fac\\\"}},\\\"direction\\\":\\\"SELL\\\",\\\"market\\\":{\\\"baseCurrencyCode\\\":\\\"BTC\\\",\\\"quoteCurrencyCode\\\":\\\"EUR\\\",\\\"baseCurrencyName\\\":\\\"Bitcoin\\\",\\\"quoteCurrencyName\\\":\\\"Euro\\\"},\\\"amountSpec\\\":{\\\"type\\\":\\\"QuoteSideFixedAmountSpec\\\",\\\"amount\\\":500000},\\\"priceSpec\\\":{\\\"type\\\":\\\"MarketPriceSpec\\\"},\\\"protocolTypes\\\":[\\\"BISQ_EASY\\\"],\\\"baseSidePaymentMethodSpecs\\\":[{\\\"type\\\":\\\"BitcoinPaymentMethodSpec\\\",\\\"paymentMethod\\\":\\\"MAIN_CHAIN\\\",\\\"saltedMakerAccountId\\\":null}],\\\"quoteSidePaymentMethodSpecs\\\":[{\\\"type\\\":\\\"FiatPaymentMethodSpec\\\",\\\"paymentMethod\\\":\\\"SEPA\\\",\\\"saltedMakerAccountId\\\":null}],\\\"offerOptions\\\":[{\\\"type\\\":\\\"ReputationOption\\\",\\\"requiredTotalReputationScore\\\":30000}],\\\"supportedLanguageCodes\\\":[\\\"en\\\"],\\\"version\\\":0,\\\"tradeProtocolVersion\\\":\\\"1.0.0\\\",\\\"appVersion\\\":\\\"2.1.11\\\"},\\\"myUserIdentity\\\":{\\\"identity\\\":{\\\"tag\\\":\\\"spike_buyer-0fefe34f337476c6596e1735b090e8d713c6988c\\\",\\\"networkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55313}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAEC3RCMTc/EhWBYjFf9XF2O/OU5zTPIr1/csduQZo2cRZ8VqQnDCHMJP206xm5IDY6IB9GvPOS2VjDyk+8QOrdxw==\\\"},\\\"keyId\\\":\\\"5349d92200d1f3fd5079e3baffceb408737f0019\\\",\\\"hash\\\":\\\"D+/jTzN0dsZZbhc1sJDo1xPGmIw=\\\",\\\"id\\\":\\\"0fefe34f337476c6596e1735b090e8d713c6988c\\\"}}},\\\"userProfile\\\":{\\\"version\\\":1,\\\"nickName\\\":\\\"spike_buyer\\\",\\\"proofOfWork\\\":{\\\"payloadEncoded\\\":\\\"D+/jTzN0dsZZbhc1sJDo1xPGmIw=\\\",\\\"counter\\\":48435,\\\"challengeEncoded\\\":null,\\\"difficulty\\\":65536.0,\\\"solutionEncoded\\\":\\\"AAAAAAAAvTM=\\\",\\\"duration\\\":9},\\\"avatarVersion\\\":0,\\\"networkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55313}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAEC3RCMTc/EhWBYjFf9XF2O/OU5zTPIr1/csduQZo2cRZ8VqQnDCHMJP206xm5IDY6IB9GvPOS2VjDyk+8QOrdxw==\\\"},\\\"keyId\\\":\\\"5349d92200d1f3fd5079e3baffceb408737f0019\\\",\\\"hash\\\":\\\"D+/jTzN0dsZZbhc1sJDo1xPGmIw=\\\",\\\"id\\\":\\\"0fefe34f337476c6596e1735b090e8d713c6988c\\\"}},\\\"terms\\\":\\\"\\\",\\\"statement\\\":\\\"\\\",\\\"applicationVersion\\\":\\\"2.1.11\\\",\\\"nym\\\":\\\"Deeply-Supportive-Shake-604\\\",\\\"userName\\\":\\\"spike_buyer\\\",\\\"publishDate\\\":1784495314788}},\\\"traders\\\":[{\\\"version\\\":1,\\\"nickName\\\":\\\"spike_seller\\\",\\\"proofOfWork\\\":{\\\"payloadEncoded\\\":\\\"GqwdzRzEdiacL4Pvo1Kmr/aEn6w=\\\",\\\"counter\\\":57552,\\\"challengeEncoded\\\":null,\\\"difficulty\\\":65536.0,\\\"solutionEncoded\\\":\\\"AAAAAAAA4NA=\\\",\\\"duration\\\":7},\\\"avatarVersion\\\":0,\\\"networkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55309}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAE4NUkiW1cgMkvxg90A/IHuqldfRHPIkS2vJ0Z+ls1N+Mnf5PXN/eTtQv8i6xtlT7koxUHl7XD2pE2b3iFPAw2rA==\\\"},\\\"keyId\\\":\\\"aa25587a97f88fbb80c0699fdb827df8ebb4b021\\\",\\\"hash\\\":\\\"GqwdzRzEdiacL4Pvo1Kmr/aEn6w=\\\",\\\"id\\\":\\\"1aac1dcd1cc476269c2f83efa352a6aff6849fac\\\"}},\\\"terms\\\":\\\"\\\",\\\"statement\\\":\\\"\\\",\\\"applicationVersion\\\":\\\"2.1.11\\\",\\\"nym\\\":\\\"Kindly-Fetid-Telegrapher-772\\\",\\\"userName\\\":\\\"spike_seller\\\",\\\"publishDate\\\":1784495314708}],\\\"mediator\\\":null},\\\"trade\\\":{\\\"contract\\\":{\\\"takeOfferDate\\\":1784496592626,\\\"offer\\\":{\\\"id\\\":\\\"767ac762-11d5-4f32-afa1-5c5f305117a6\\\",\\\"date\\\":1784496590603,\\\"makerNetworkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55309}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAE4NUkiW1cgMkvxg90A/IHuqldfRHPIkS2vJ0Z+ls1N+Mnf5PXN/eTtQv8i6xtlT7koxUHl7XD2pE2b3iFPAw2rA==\\\"},\\\"keyId\\\":\\\"aa25587a97f88fbb80c0699fdb827df8ebb4b021\\\",\\\"hash\\\":\\\"GqwdzRzEdiacL4Pvo1Kmr/aEn6w=\\\",\\\"id\\\":\\\"1aac1dcd1cc476269c2f83efa352a6aff6849fac\\\"}},\\\"direction\\\":\\\"SELL\\\",\\\"market\\\":{\\\"baseCurrencyCode\\\":\\\"BTC\\\",\\\"quoteCurrencyCode\\\":\\\"EUR\\\",\\\"baseCurrencyName\\\":\\\"Bitcoin\\\",\\\"quoteCurrencyName\\\":\\\"Euro\\\"},\\\"amountSpec\\\":{\\\"type\\\":\\\"QuoteSideFixedAmountSpec\\\",\\\"amount\\\":500000},\\\"priceSpec\\\":{\\\"type\\\":\\\"MarketPriceSpec\\\"},\\\"protocolTypes\\\":[\\\"BISQ_EASY\\\"],\\\"baseSidePaymentMethodSpecs\\\":[{\\\"type\\\":\\\"BitcoinPaymentMethodSpec\\\",\\\"paymentMethod\\\":\\\"MAIN_CHAIN\\\",\\\"saltedMakerAccountId\\\":null}],\\\"quoteSidePaymentMethodSpecs\\\":[{\\\"type\\\":\\\"FiatPaymentMethodSpec\\\",\\\"paymentMethod\\\":\\\"SEPA\\\",\\\"saltedMakerAccountId\\\":null}],\\\"offerOptions\\\":[{\\\"type\\\":\\\"ReputationOption\\\",\\\"requiredTotalReputationScore\\\":30000}],\\\"supportedLanguageCodes\\\":[\\\"en\\\"],\\\"version\\\":0,\\\"tradeProtocolVersion\\\":\\\"1.0.0\\\",\\\"appVersion\\\":\\\"2.1.11\\\"},\\\"maker\\\":{\\\"role\\\":\\\"MAKER\\\",\\\"networkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55309}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAE4NUkiW1cgMkvxg90A/IHuqldfRHPIkS2vJ0Z+ls1N+Mnf5PXN/eTtQv8i6xtlT7koxUHl7XD2pE2b3iFPAw2rA==\\\"},\\\"keyId\\\":\\\"aa25587a97f88fbb80c0699fdb827df8ebb4b021\\\",\\\"hash\\\":\\\"GqwdzRzEdiacL4Pvo1Kmr/aEn6w=\\\",\\\"id\\\":\\\"1aac1dcd1cc476269c2f83efa352a6aff6849fac\\\"}}},\\\"taker\\\":{\\\"role\\\":\\\"TAKER\\\",\\\"networkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55313}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAEC3RCMTc/EhWBYjFf9XF2O/OU5zTPIr1/csduQZo2cRZ8VqQnDCHMJP206xm5IDY6IB9GvPOS2VjDyk+8QOrdxw==\\\"},\\\"keyId\\\":\\\"5349d92200d1f3fd5079e3baffceb408737f0019\\\",\\\"hash\\\":\\\"D+/jTzN0dsZZbhc1sJDo1xPGmIw=\\\",\\\"id\\\":\\\"0fefe34f337476c6596e1735b090e8d713c6988c\\\"}}},\\\"baseSideAmount\\\":88699,\\\"quoteSideAmount\\\":500000,\\\"baseSidePaymentMethodSpec\\\":{\\\"type\\\":\\\"BitcoinPaymentMethodSpec\\\",\\\"paymentMethod\\\":\\\"MAIN_CHAIN\\\",\\\"saltedMakerAccountId\\\":null},\\\"quoteSidePaymentMethodSpec\\\":{\\\"type\\\":\\\"FiatPaymentMethodSpec\\\",\\\"paymentMethod\\\":\\\"SEPA\\\",\\\"saltedMakerAccountId\\\":null},\\\"mediator\\\":null,\\\"priceSpec\\\":{\\\"type\\\":\\\"MarketPriceSpec\\\"},\\\"marketPrice\\\":563704727},\\\"id\\\":\\\"bc7f566d-b659-3a83-b455-d4e8f4e94f94\\\",\\\"tradeRole\\\":\\\"BUYER_AS_TAKER\\\",\\\"myIdentity\\\":{\\\"tag\\\":\\\"spike_buyer-0fefe34f337476c6596e1735b090e8d713c6988c\\\",\\\"networkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55313}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAEC3RCMTc/EhWBYjFf9XF2O/OU5zTPIr1/csduQZo2cRZ8VqQnDCHMJP206xm5IDY6IB9GvPOS2VjDyk+8QOrdxw==\\\"},\\\"keyId\\\":\\\"5349d92200d1f3fd5079e3baffceb408737f0019\\\",\\\"hash\\\":\\\"D+/jTzN0dsZZbhc1sJDo1xPGmIw=\\\",\\\"id\\\":\\\"0fefe34f337476c6596e1735b090e8d713c6988c\\\"}}},\\\"taker\\\":{\\\"networkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55313}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAEC3RCMTc/EhWBYjFf9XF2O/OU5zTPIr1/csduQZo2cRZ8VqQnDCHMJP206xm5IDY6IB9GvPOS2VjDyk+8QOrdxw==\\\"},\\\"keyId\\\":\\\"5349d92200d1f3fd5079e3baffceb408737f0019\\\",\\\"hash\\\":\\\"D+/jTzN0dsZZbhc1sJDo1xPGmIw=\\\",\\\"id\\\":\\\"0fefe34f337476c6596e1735b090e8d713c6988c\\\"}}},\\\"maker\\\":{\\\"networkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55309}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAE4NUkiW1cgMkvxg90A/IHuqldfRHPIkS2vJ0Z+ls1N+Mnf5PXN/eTtQv8i6xtlT7koxUHl7XD2pE2b3iFPAw2rA==\\\"},\\\"keyId\\\":\\\"aa25587a97f88fbb80c0699fdb827df8ebb4b021\\\",\\\"hash\\\":\\\"GqwdzRzEdiacL4Pvo1Kmr/aEn6w=\\\",\\\"id\\\":\\\"1aac1dcd1cc476269c2f83efa352a6aff6849fac\\\"}}},\\\"tradeState\\\":\\\"TAKER_SENT_TAKE_OFFER_REQUEST\\\",\\\"paymentAccountData\\\":null,\\\"bitcoinPaymentData\\\":null,\\\"paymentProof\\\":null,\\\"interruptTradeInitiator\\\":null,\\\"errorMessage\\\":null,\\\"errorStackTrace\\\":null,\\\"peersErrorMessage\\\":null,\\\"peersErrorStackTrace\\\":null},\\\"makerUserProfile\\\":{\\\"version\\\":1,\\\"nickName\\\":\\\"spike_seller\\\",\\\"proofOfWork\\\":{\\\"payloadEncoded\\\":\\\"GqwdzRzEdiacL4Pvo1Kmr/aEn6w=\\\",\\\"counter\\\":57552,\\\"challengeEncoded\\\":null,\\\"difficulty\\\":65536.0,\\\"solutionEncoded\\\":\\\"AAAAAAAA4NA=\\\",\\\"duration\\\":7},\\\"avatarVersion\\\":0,\\\"networkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55309}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAE4NUkiW1cgMkvxg90A/IHuqldfRHPIkS2vJ0Z+ls1N+Mnf5PXN/eTtQv8i6xtlT7koxUHl7XD2pE2b3iFPAw2rA==\\\"},\\\"keyId\\\":\\\"aa25587a97f88fbb80c0699fdb827df8ebb4b021\\\",\\\"hash\\\":\\\"GqwdzRzEdiacL4Pvo1Kmr/aEn6w=\\\",\\\"id\\\":\\\"1aac1dcd1cc476269c2f83efa352a6aff6849fac\\\"}},\\\"terms\\\":\\\"\\\",\\\"statement\\\":\\\"\\\",\\\"applicationVersion\\\":\\\"2.1.11\\\",\\\"nym\\\":\\\"Kindly-Fetid-Telegrapher-772\\\",\\\"userName\\\":\\\"spike_seller\\\",\\\"publishDate\\\":1784495314708},\\\"takerUserProfile\\\":{\\\"version\\\":1,\\\"nickName\\\":\\\"spike_buyer\\\",\\\"proofOfWork\\\":{\\\"payloadEncoded\\\":\\\"D+/jTzN0dsZZbhc1sJDo1xPGmIw=\\\",\\\"counter\\\":48435,\\\"challengeEncoded\\\":null,\\\"difficulty\\\":65536.0,\\\"solutionEncoded\\\":\\\"AAAAAAAAvTM=\\\",\\\"duration\\\":9},\\\"avatarVersion\\\":0,\\\"networkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55313}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAEC3RCMTc/EhWBYjFf9XF2O/OU5zTPIr1/csduQZo2cRZ8VqQnDCHMJP206xm5IDY6IB9GvPOS2VjDyk+8QOrdxw==\\\"},\\\"keyId\\\":\\\"5349d92200d1f3fd5079e3baffceb408737f0019\\\",\\\"hash\\\":\\\"D+/jTzN0dsZZbhc1sJDo1xPGmIw=\\\",\\\"id\\\":\\\"0fefe34f337476c6596e1735b090e8d713c6988c\\\"}},\\\"terms\\\":\\\"\\\",\\\"statement\\\":\\\"\\\",\\\"applicationVersion\\\":\\\"2.1.11\\\",\\\"nym\\\":\\\"Deeply-Supportive-Shake-604\\\",\\\"userName\\\":\\\"spike_buyer\\\",\\\"publishDate\\\":1784495314788},\\\"mediatorUserProfile\\\":null,\\\"directionalTitle\\\":\\\"Buying from:\\\",\\\"formattedDate\\\":\\\"Jul 19, 2026\\\",\\\"formattedTime\\\":\\\"11:29:52 PM\\\",\\\"market\\\":\\\"Euro (BTC/EUR)\\\",\\\"price\\\":563704213,\\\"formattedPrice\\\":\\\"56370.42 BTC/EUR\\\",\\\"baseAmount\\\":88699,\\\"formattedBaseAmount\\\":\\\"0.00088699\\\",\\\"quoteAmount\\\":500000,\\\"formattedQuoteAmount\\\":\\\"50.00\\\",\\\"bitcoinSettlementMethod\\\":\\\"MAIN_CHAIN\\\",\\\"bitcoinSettlementMethodDisplayString\\\":\\\"Onchain\\\",\\\"fiatPaymentMethod\\\":\\\"SEPA\\\",\\\"fiatPaymentMethodDisplayString\\\":\\\"SEPA\\\",\\\"isFiatPaymentMethodCustom\\\":false,\\\"formattedMyRole\\\":\\\"Taker\\\",\\\"peersReputationScore\\\":{\\\"totalScore\\\":0,\\\"fiveSystemScore\\\":0.0,\\\"ranking\\\":0}}]\",\"modificationType\":\"ADDED\",\"sequenceNumber\":1}",
+   "{\"type\":\"WebSocketEvent\",\"topic\":\"TRADE_PROPERTIES\",\"subscriberId\":\"sub-props\",\"payload\":\"[{\\\"bc7f566d-b659-3a83-b455-d4e8f4e94f94\\\":{\\\"paymentAccountData\\\":\\\"Alice Spike, IBAN DE02 1203 0000 0000 2020 51 (SEPA)\\\"}}]\",\"modificationType\":\"REPLACE\",\"sequenceNumber\":4}",
+   "{\"type\":\"WebSocketEvent\",\"topic\":\"TRADE_PROPERTIES\",\"subscriberId\":\"sub-props\",\"payload\":\"[{\\\"bc7f566d-b659-3a83-b455-d4e8f4e94f94\\\":{\\\"tradeState\\\":\\\"TAKER_RECEIVED_TAKE_OFFER_RESPONSE__BUYER_DID_NOT_SENT_BTC_ADDRESS__BUYER_RECEIVED_ACCOUNT_DATA\\\"}}]\",\"modificationType\":\"REPLACE\",\"sequenceNumber\":5}",
+   "{\"type\":\"WebSocketEvent\",\"topic\":\"TRADE_PROPERTIES\",\"subscriberId\":\"sub-props\",\"payload\":\"[{\\\"bc7f566d-b659-3a83-b455-d4e8f4e94f94\\\":{\\\"bitcoinPaymentData\\\":\\\"bcrt1qspikebuyerdestinationaddress000000000\\\"}}]\",\"modificationType\":\"REPLACE\",\"sequenceNumber\":6}",
+   "{\"type\":\"WebSocketEvent\",\"topic\":\"TRADE_PROPERTIES\",\"subscriberId\":\"sub-props\",\"payload\":\"[{\\\"bc7f566d-b659-3a83-b455-d4e8f4e94f94\\\":{\\\"tradeState\\\":\\\"TAKER_RECEIVED_TAKE_OFFER_RESPONSE__BUYER_SENT_BTC_ADDRESS__BUYER_RECEIVED_ACCOUNT_DATA\\\"}}]\",\"modificationType\":\"REPLACE\",\"sequenceNumber\":7}",
+   "{\"type\":\"WebSocketEvent\",\"topic\":\"TRADE_PROPERTIES\",\"subscriberId\":\"sub-props\",\"payload\":\"[{\\\"bc7f566d-b659-3a83-b455-d4e8f4e94f94\\\":{\\\"tradeState\\\":\\\"BUYER_SENT_FIAT_SENT_CONFIRMATION\\\"}}]\",\"modificationType\":\"REPLACE\",\"sequenceNumber\":8}",
+   "{\"type\":\"WebSocketEvent\",\"topic\":\"TRADE_PROPERTIES\",\"subscriberId\":\"sub-props\",\"payload\":\"[{\\\"bc7f566d-b659-3a83-b455-d4e8f4e94f94\\\":{\\\"tradeState\\\":\\\"BUYER_RECEIVED_SELLERS_FIAT_RECEIPT_CONFIRMATION\\\"}}]\",\"modificationType\":\"REPLACE\",\"sequenceNumber\":9}",
+   "{\"type\":\"WebSocketEvent\",\"topic\":\"TRADE_PROPERTIES\",\"subscriberId\":\"sub-props\",\"payload\":\"[{\\\"bc7f566d-b659-3a83-b455-d4e8f4e94f94\\\":{\\\"paymentProof\\\":\\\"f00dbabe00000000000000000000000000000000000000000000000000000000\\\"}}]\",\"modificationType\":\"REPLACE\",\"sequenceNumber\":10}",
+   "{\"type\":\"WebSocketEvent\",\"topic\":\"TRADE_PROPERTIES\",\"subscriberId\":\"sub-props\",\"payload\":\"[{\\\"bc7f566d-b659-3a83-b455-d4e8f4e94f94\\\":{\\\"tradeState\\\":\\\"BUYER_RECEIVED_BTC_SENT_CONFIRMATION\\\"}}]\",\"modificationType\":\"REPLACE\",\"sequenceNumber\":11}",
+   "{\"type\":\"WebSocketEvent\",\"topic\":\"TRADE_PROPERTIES\",\"subscriberId\":\"sub-props\",\"payload\":\"[{\\\"bc7f566d-b659-3a83-b455-d4e8f4e94f94\\\":{\\\"tradeCompletedDate\\\":1784496597851}}]\",\"modificationType\":\"REPLACE\",\"sequenceNumber\":12}",
+   "{\"type\":\"WebSocketEvent\",\"topic\":\"TRADE_PROPERTIES\",\"subscriberId\":\"sub-props\",\"payload\":\"[{\\\"bc7f566d-b659-3a83-b455-d4e8f4e94f94\\\":{\\\"tradeState\\\":\\\"BTC_CONFIRMED\\\"}}]\",\"modificationType\":\"REPLACE\",\"sequenceNumber\":13}",
+   "{\"type\":\"WebSocketEvent\",\"topic\":\"TRADES\",\"subscriberId\":\"sub-trades\",\"payload\":\"[{\\\"channel\\\":{\\\"id\\\":\\\"bisq_easy_open_trades.bc7f566d-b659-3a83-b455-d4e8f4e94f94\\\",\\\"tradeId\\\":\\\"bc7f566d-b659-3a83-b455-d4e8f4e94f94\\\",\\\"bisqEasyOffer\\\":{\\\"id\\\":\\\"767ac762-11d5-4f32-afa1-5c5f305117a6\\\",\\\"date\\\":1784496590603,\\\"makerNetworkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55309}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAE4NUkiW1cgMkvxg90A/IHuqldfRHPIkS2vJ0Z+ls1N+Mnf5PXN/eTtQv8i6xtlT7koxUHl7XD2pE2b3iFPAw2rA==\\\"},\\\"keyId\\\":\\\"aa25587a97f88fbb80c0699fdb827df8ebb4b021\\\",\\\"hash\\\":\\\"GqwdzRzEdiacL4Pvo1Kmr/aEn6w=\\\",\\\"id\\\":\\\"1aac1dcd1cc476269c2f83efa352a6aff6849fac\\\"}},\\\"direction\\\":\\\"SELL\\\",\\\"market\\\":{\\\"baseCurrencyCode\\\":\\\"BTC\\\",\\\"quoteCurrencyCode\\\":\\\"EUR\\\",\\\"baseCurrencyName\\\":\\\"Bitcoin\\\",\\\"quoteCurrencyName\\\":\\\"Euro\\\"},\\\"amountSpec\\\":{\\\"type\\\":\\\"QuoteSideFixedAmountSpec\\\",\\\"amount\\\":500000},\\\"priceSpec\\\":{\\\"type\\\":\\\"MarketPriceSpec\\\"},\\\"protocolTypes\\\":[\\\"BISQ_EASY\\\"],\\\"baseSidePaymentMethodSpecs\\\":[{\\\"type\\\":\\\"BitcoinPaymentMethodSpec\\\",\\\"paymentMethod\\\":\\\"MAIN_CHAIN\\\",\\\"saltedMakerAccountId\\\":null}],\\\"quoteSidePaymentMethodSpecs\\\":[{\\\"type\\\":\\\"FiatPaymentMethodSpec\\\",\\\"paymentMethod\\\":\\\"SEPA\\\",\\\"saltedMakerAccountId\\\":null}],\\\"offerOptions\\\":[{\\\"type\\\":\\\"ReputationOption\\\",\\\"requiredTotalReputationScore\\\":30000}],\\\"supportedLanguageCodes\\\":[\\\"en\\\"],\\\"version\\\":0,\\\"tradeProtocolVersion\\\":\\\"1.0.0\\\",\\\"appVersion\\\":\\\"2.1.11\\\"},\\\"myUserIdentity\\\":{\\\"identity\\\":{\\\"tag\\\":\\\"spike_buyer-0fefe34f337476c6596e1735b090e8d713c6988c\\\",\\\"networkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55313}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAEC3RCMTc/EhWBYjFf9XF2O/OU5zTPIr1/csduQZo2cRZ8VqQnDCHMJP206xm5IDY6IB9GvPOS2VjDyk+8QOrdxw==\\\"},\\\"keyId\\\":\\\"5349d92200d1f3fd5079e3baffceb408737f0019\\\",\\\"hash\\\":\\\"D+/jTzN0dsZZbhc1sJDo1xPGmIw=\\\",\\\"id\\\":\\\"0fefe34f337476c6596e1735b090e8d713c6988c\\\"}}},\\\"userProfile\\\":{\\\"version\\\":1,\\\"nickName\\\":\\\"spike_buyer\\\",\\\"proofOfWork\\\":{\\\"payloadEncoded\\\":\\\"D+/jTzN0dsZZbhc1sJDo1xPGmIw=\\\",\\\"counter\\\":48435,\\\"challengeEncoded\\\":null,\\\"difficulty\\\":65536.0,\\\"solutionEncoded\\\":\\\"AAAAAAAAvTM=\\\",\\\"duration\\\":9},\\\"avatarVersion\\\":0,\\\"networkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55313}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAEC3RCMTc/EhWBYjFf9XF2O/OU5zTPIr1/csduQZo2cRZ8VqQnDCHMJP206xm5IDY6IB9GvPOS2VjDyk+8QOrdxw==\\\"},\\\"keyId\\\":\\\"5349d92200d1f3fd5079e3baffceb408737f0019\\\",\\\"hash\\\":\\\"D+/jTzN0dsZZbhc1sJDo1xPGmIw=\\\",\\\"id\\\":\\\"0fefe34f337476c6596e1735b090e8d713c6988c\\\"}},\\\"terms\\\":\\\"\\\",\\\"statement\\\":\\\"\\\",\\\"applicationVersion\\\":\\\"2.1.11\\\",\\\"nym\\\":\\\"Deeply-Supportive-Shake-604\\\",\\\"userName\\\":\\\"spike_buyer\\\",\\\"publishDate\\\":1784495314788}},\\\"traders\\\":[{\\\"version\\\":1,\\\"nickName\\\":\\\"spike_seller\\\",\\\"proofOfWork\\\":{\\\"payloadEncoded\\\":\\\"GqwdzRzEdiacL4Pvo1Kmr/aEn6w=\\\",\\\"counter\\\":57552,\\\"challengeEncoded\\\":null,\\\"difficulty\\\":65536.0,\\\"solutionEncoded\\\":\\\"AAAAAAAA4NA=\\\",\\\"duration\\\":7},\\\"avatarVersion\\\":0,\\\"networkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55309}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAE4NUkiW1cgMkvxg90A/IHuqldfRHPIkS2vJ0Z+ls1N+Mnf5PXN/eTtQv8i6xtlT7koxUHl7XD2pE2b3iFPAw2rA==\\\"},\\\"keyId\\\":\\\"aa25587a97f88fbb80c0699fdb827df8ebb4b021\\\",\\\"hash\\\":\\\"GqwdzRzEdiacL4Pvo1Kmr/aEn6w=\\\",\\\"id\\\":\\\"1aac1dcd1cc476269c2f83efa352a6aff6849fac\\\"}},\\\"terms\\\":\\\"\\\",\\\"statement\\\":\\\"\\\",\\\"applicationVersion\\\":\\\"2.1.11\\\",\\\"nym\\\":\\\"Kindly-Fetid-Telegrapher-772\\\",\\\"userName\\\":\\\"spike_seller\\\",\\\"publishDate\\\":1784495314708}],\\\"mediator\\\":null},\\\"trade\\\":{\\\"contract\\\":{\\\"takeOfferDate\\\":1784496592626,\\\"offer\\\":{\\\"id\\\":\\\"767ac762-11d5-4f32-afa1-5c5f305117a6\\\",\\\"date\\\":1784496590603,\\\"makerNetworkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55309}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAE4NUkiW1cgMkvxg90A/IHuqldfRHPIkS2vJ0Z+ls1N+Mnf5PXN/eTtQv8i6xtlT7koxUHl7XD2pE2b3iFPAw2rA==\\\"},\\\"keyId\\\":\\\"aa25587a97f88fbb80c0699fdb827df8ebb4b021\\\",\\\"hash\\\":\\\"GqwdzRzEdiacL4Pvo1Kmr/aEn6w=\\\",\\\"id\\\":\\\"1aac1dcd1cc476269c2f83efa352a6aff6849fac\\\"}},\\\"direction\\\":\\\"SELL\\\",\\\"market\\\":{\\\"baseCurrencyCode\\\":\\\"BTC\\\",\\\"quoteCurrencyCode\\\":\\\"EUR\\\",\\\"baseCurrencyName\\\":\\\"Bitcoin\\\",\\\"quoteCurrencyName\\\":\\\"Euro\\\"},\\\"amountSpec\\\":{\\\"type\\\":\\\"QuoteSideFixedAmountSpec\\\",\\\"amount\\\":500000},\\\"priceSpec\\\":{\\\"type\\\":\\\"MarketPriceSpec\\\"},\\\"protocolTypes\\\":[\\\"BISQ_EASY\\\"],\\\"baseSidePaymentMethodSpecs\\\":[{\\\"type\\\":\\\"BitcoinPaymentMethodSpec\\\",\\\"paymentMethod\\\":\\\"MAIN_CHAIN\\\",\\\"saltedMakerAccountId\\\":null}],\\\"quoteSidePaymentMethodSpecs\\\":[{\\\"type\\\":\\\"FiatPaymentMethodSpec\\\",\\\"paymentMethod\\\":\\\"SEPA\\\",\\\"saltedMakerAccountId\\\":null}],\\\"offerOptions\\\":[{\\\"type\\\":\\\"ReputationOption\\\",\\\"requiredTotalReputationScore\\\":30000}],\\\"supportedLanguageCodes\\\":[\\\"en\\\"],\\\"version\\\":0,\\\"tradeProtocolVersion\\\":\\\"1.0.0\\\",\\\"appVersion\\\":\\\"2.1.11\\\"},\\\"maker\\\":{\\\"role\\\":\\\"MAKER\\\",\\\"networkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55309}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAE4NUkiW1cgMkvxg90A/IHuqldfRHPIkS2vJ0Z+ls1N+Mnf5PXN/eTtQv8i6xtlT7koxUHl7XD2pE2b3iFPAw2rA==\\\"},\\\"keyId\\\":\\\"aa25587a97f88fbb80c0699fdb827df8ebb4b021\\\",\\\"hash\\\":\\\"GqwdzRzEdiacL4Pvo1Kmr/aEn6w=\\\",\\\"id\\\":\\\"1aac1dcd1cc476269c2f83efa352a6aff6849fac\\\"}}},\\\"taker\\\":{\\\"role\\\":\\\"TAKER\\\",\\\"networkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55313}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAEC3RCMTc/EhWBYjFf9XF2O/OU5zTPIr1/csduQZo2cRZ8VqQnDCHMJP206xm5IDY6IB9GvPOS2VjDyk+8QOrdxw==\\\"},\\\"keyId\\\":\\\"5349d92200d1f3fd5079e3baffceb408737f0019\\\",\\\"hash\\\":\\\"D+/jTzN0dsZZbhc1sJDo1xPGmIw=\\\",\\\"id\\\":\\\"0fefe34f337476c6596e1735b090e8d713c6988c\\\"}}},\\\"baseSideAmount\\\":88699,\\\"quoteSideAmount\\\":500000,\\\"baseSidePaymentMethodSpec\\\":{\\\"type\\\":\\\"BitcoinPaymentMethodSpec\\\",\\\"paymentMethod\\\":\\\"MAIN_CHAIN\\\",\\\"saltedMakerAccountId\\\":null},\\\"quoteSidePaymentMethodSpec\\\":{\\\"type\\\":\\\"FiatPaymentMethodSpec\\\",\\\"paymentMethod\\\":\\\"SEPA\\\",\\\"saltedMakerAccountId\\\":null},\\\"mediator\\\":null,\\\"priceSpec\\\":{\\\"type\\\":\\\"MarketPriceSpec\\\"},\\\"marketPrice\\\":563704727},\\\"id\\\":\\\"bc7f566d-b659-3a83-b455-d4e8f4e94f94\\\",\\\"tradeRole\\\":\\\"BUYER_AS_TAKER\\\",\\\"myIdentity\\\":{\\\"tag\\\":\\\"spike_buyer-0fefe34f337476c6596e1735b090e8d713c6988c\\\",\\\"networkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55313}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAEC3RCMTc/EhWBYjFf9XF2O/OU5zTPIr1/csduQZo2cRZ8VqQnDCHMJP206xm5IDY6IB9GvPOS2VjDyk+8QOrdxw==\\\"},\\\"keyId\\\":\\\"5349d92200d1f3fd5079e3baffceb408737f0019\\\",\\\"hash\\\":\\\"D+/jTzN0dsZZbhc1sJDo1xPGmIw=\\\",\\\"id\\\":\\\"0fefe34f337476c6596e1735b090e8d713c6988c\\\"}}},\\\"taker\\\":{\\\"networkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55313}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAEC3RCMTc/EhWBYjFf9XF2O/OU5zTPIr1/csduQZo2cRZ8VqQnDCHMJP206xm5IDY6IB9GvPOS2VjDyk+8QOrdxw==\\\"},\\\"keyId\\\":\\\"5349d92200d1f3fd5079e3baffceb408737f0019\\\",\\\"hash\\\":\\\"D+/jTzN0dsZZbhc1sJDo1xPGmIw=\\\",\\\"id\\\":\\\"0fefe34f337476c6596e1735b090e8d713c6988c\\\"}}},\\\"maker\\\":{\\\"networkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55309}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAE4NUkiW1cgMkvxg90A/IHuqldfRHPIkS2vJ0Z+ls1N+Mnf5PXN/eTtQv8i6xtlT7koxUHl7XD2pE2b3iFPAw2rA==\\\"},\\\"keyId\\\":\\\"aa25587a97f88fbb80c0699fdb827df8ebb4b021\\\",\\\"hash\\\":\\\"GqwdzRzEdiacL4Pvo1Kmr/aEn6w=\\\",\\\"id\\\":\\\"1aac1dcd1cc476269c2f83efa352a6aff6849fac\\\"}}},\\\"tradeState\\\":\\\"TAKER_SENT_TAKE_OFFER_REQUEST\\\",\\\"paymentAccountData\\\":null,\\\"bitcoinPaymentData\\\":null,\\\"paymentProof\\\":null,\\\"interruptTradeInitiator\\\":null,\\\"errorMessage\\\":null,\\\"errorStackTrace\\\":null,\\\"peersErrorMessage\\\":null,\\\"peersErrorStackTrace\\\":null},\\\"makerUserProfile\\\":{\\\"version\\\":1,\\\"nickName\\\":\\\"spike_seller\\\",\\\"proofOfWork\\\":{\\\"payloadEncoded\\\":\\\"GqwdzRzEdiacL4Pvo1Kmr/aEn6w=\\\",\\\"counter\\\":57552,\\\"challengeEncoded\\\":null,\\\"difficulty\\\":65536.0,\\\"solutionEncoded\\\":\\\"AAAAAAAA4NA=\\\",\\\"duration\\\":7},\\\"avatarVersion\\\":0,\\\"networkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55309}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAE4NUkiW1cgMkvxg90A/IHuqldfRHPIkS2vJ0Z+ls1N+Mnf5PXN/eTtQv8i6xtlT7koxUHl7XD2pE2b3iFPAw2rA==\\\"},\\\"keyId\\\":\\\"aa25587a97f88fbb80c0699fdb827df8ebb4b021\\\",\\\"hash\\\":\\\"GqwdzRzEdiacL4Pvo1Kmr/aEn6w=\\\",\\\"id\\\":\\\"1aac1dcd1cc476269c2f83efa352a6aff6849fac\\\"}},\\\"terms\\\":\\\"\\\",\\\"statement\\\":\\\"\\\",\\\"applicationVersion\\\":\\\"2.1.11\\\",\\\"nym\\\":\\\"Kindly-Fetid-Telegrapher-772\\\",\\\"userName\\\":\\\"spike_seller\\\",\\\"publishDate\\\":1784495314708},\\\"takerUserProfile\\\":{\\\"version\\\":1,\\\"nickName\\\":\\\"spike_buyer\\\",\\\"proofOfWork\\\":{\\\"payloadEncoded\\\":\\\"D+/jTzN0dsZZbhc1sJDo1xPGmIw=\\\",\\\"counter\\\":48435,\\\"challengeEncoded\\\":null,\\\"difficulty\\\":65536.0,\\\"solutionEncoded\\\":\\\"AAAAAAAAvTM=\\\",\\\"duration\\\":9},\\\"avatarVersion\\\":0,\\\"networkId\\\":{\\\"addressByTransportTypeMap\\\":{\\\"map\\\":{\\\"CLEAR\\\":{\\\"host\\\":\\\"127.0.0.1\\\",\\\"port\\\":55313}}},\\\"pubKey\\\":{\\\"publicKey\\\":{\\\"encoded\\\":\\\"MFYwEAYHKoZIzj0CAQYFK4EEAAoDQgAEC3RCMTc/EhWBYjFf9XF2O/OU5zTPIr1/csduQZo2cRZ8VqQnDCHMJP206xm5IDY6IB9GvPOS2VjDyk+8QOrdxw==\\\"},\\\"keyId\\\":\\\"5349d92200d1f3fd5079e3baffceb408737f0019\\\",\\\"hash\\\":\\\"D+/jTzN0dsZZbhc1sJDo1xPGmIw=\\\",\\\"id\\\":\\\"0fefe34f337476c6596e1735b090e8d713c6988c\\\"}},\\\"terms\\\":\\\"\\\",\\\"statement\\\":\\\"\\\",\\\"applicationVersion\\\":\\\"2.1.11\\\",\\\"nym\\\":\\\"Deeply-Supportive-Shake-604\\\",\\\"userName\\\":\\\"spike_buyer\\\",\\\"publishDate\\\":1784495314788},\\\"mediatorUserProfile\\\":null,\\\"directionalTitle\\\":\\\"Buying from:\\\",\\\"formattedDate\\\":\\\"Jul 19, 2026\\\",\\\"formattedTime\\\":\\\"11:29:52 PM\\\",\\\"market\\\":\\\"Euro (BTC/EUR)\\\",\\\"price\\\":563704213,\\\"formattedPrice\\\":\\\"56370.42 BTC/EUR\\\",\\\"baseAmount\\\":88699,\\\"formattedBaseAmount\\\":\\\"0.00088699\\\",\\\"quoteAmount\\\":500000,\\\"formattedQuoteAmount\\\":\\\"50.00\\\",\\\"bitcoinSettlementMethod\\\":\\\"MAIN_CHAIN\\\",\\\"bitcoinSettlementMethodDisplayString\\\":\\\"Onchain\\\",\\\"fiatPaymentMethod\\\":\\\"SEPA\\\",\\\"fiatPaymentMethodDisplayString\\\":\\\"SEPA\\\",\\\"isFiatPaymentMethodCustom\\\":false,\\\"formattedMyRole\\\":\\\"Taker\\\",\\\"peersReputationScore\\\":{\\\"totalScore\\\":0,\\\"fiveSystemScore\\\":0.0,\\\"ranking\\\":0}}]\",\"modificationType\":\"REMOVED\",\"sequenceNumber\":2}"
+  ]
+ }
+]
