@@ -48,6 +48,16 @@ export const TradeState = Object.freeze({
  * @property {number} fiatAmountEur
  * @property {number} btcAmountSats
  *
+ * @typedef {Object} OpenTrade
+ * @property {string} id
+ * @property {string|null} state       One of TradeState, or null when the
+ *                                     backend reports a state we do not map.
+ *                                     Never drop such a trade: the user may
+ *                                     already have paid.
+ * @property {string} [rawState]       The backend's own state string
+ * @property {string|null} sellerDetails  The seller's raw account text, if known
+ * @property {string|null} receiveAddress The address the bitcoin is going to
+ *
  * @typedef {Object} PaymentInstructions
  * @property {string} receiverName   Seller's account holder name (as bank-verifiable)
  * @property {string} iban           Seller's IBAN — the user pays this from their own bank
@@ -81,6 +91,12 @@ export class OnrampAdapter {
   /** Take an offer for a fiat amount within [minEur, maxEur].
    *  @returns {Promise<Trade>} the created trade, in state OFFER_TAKEN */
   async takeOffer(offerId, { fiatAmountEur }) { throw new Error('OnrampAdapter.takeOffer not implemented'); }
+
+  /** Trades that are still running, so a user who closed the app mid-trade can
+   *  get back to one. The backend is the source of truth; nothing about a
+   *  trade is stored by us.
+   *  @returns {Promise<OpenTrade[]>} newest first */
+  async listOpenTrades() { throw new Error('OnrampAdapter.listOpenTrades not implemented'); }
 
   /** Subscribe to a trade's state changes. cb(state, trade) fires immediately
    *  with the current state and on every transition. @returns {() => void} unsubscribe */

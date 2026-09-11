@@ -30,15 +30,52 @@ import {
 
 /** Bisq `tradeState` (compound names — match by substring) → our TradeState.
  *  Verified against the buyer-side sequence captured in the spike. */
+/** requestId of our TRADE_PROPERTIES subscription. The node echoes it on the
+ *  SubscriptionResponse that carries the initial snapshot, which is how we
+ *  tell that frame apart from an unrelated response. */
+export const WS_SUB_ID = 'sub-props';
+
+/** The WebSocket that belongs to a given REST base URL.
+ *
+ * These must point at the same node. They did not: wsUrl defaulted to
+ * ws://127.0.0.1:8090/websocket no matter what restBaseUrl said, so a node on
+ * any other port got its REST from the right place and its event stream from
+ * whatever happened to be listening on 8090. Nothing failed loudly -- the
+ * adapter connected, and then reported another node's trades as yours.
+ *
+ * It stayed hidden because every caller that used a non-default port also
+ * passed wsUrl explicitly (the contract test derives its own). The connect
+ * screen is what makes it reachable: it asks for one address, as it should. */
+export function wsUrlForRestBase(restBaseUrl) {
+  const base = String(restBaseUrl ?? '');
+  const stripped = base.replace(/\/api\/v1\/?$/, '');
+  return `${stripped.replace(/^http/, 'ws')}/websocket`;
+}
+
 export const BISQ_STATE_MAP = [
   ['BUYER_RECEIVED_BTC_SENT_CONFIRMATION',            TradeState.BTC_RELEASED],
   ['BUYER_RECEIVED_SELLERS_FIAT_RECEIPT_CONFIRMATION', TradeState.FIAT_RECEIVED],
   ['BUYER_SENT_FIAT_SENT_CONFIRMATION',               TradeState.FIAT_SENT],
   ['BUYER_RECEIVED_ACCOUNT_DATA',                     TradeState.AWAITING_FIAT_PAYMENT],
   ['BTC_CONFIRMED',                                   TradeState.COMPLETE],
+  // Measured from a live node: after taking an offer the buyer sits in
+  // TAKER_RECEIVED_TAKE_OFFER_RESPONSE__BUYER_SENT_BTC_ADDRESS__BUYER_DID_NOT_RECEIVED_ACCOUNT_DATA
+  // -- contract agreed, address sent, still waiting on the seller's bank
+  // details. That is OFFER_TAKEN. Note it contains the substring
+  // "RECEIVED_ACCOUNT_DATA" inside "DID_NOT_RECEIVED_ACCOUNT_DATA", which is
+  // why the AWAITING_FIAT_PAYMENT needle is the full
+  // "BUYER_RECEIVED_ACCOUNT_DATA" and is tested before this one.
+  ['TAKER_RECEIVED_TAKE_OFFER_RESPONSE',              TradeState.OFFER_TAKEN],
   ['TAKER_SENT_TAKE_OFFER_REQUEST',                   TradeState.OFFER_TAKEN],
   ['INIT',                                            TradeState.OFFER_TAKEN],
 ];
+
+/** Terminal from our side: nothing left for the user to do. Deliberately a
+ *  separate, narrow test rather than "did mapBisqState return COMPLETE" --
+ *  see listOpenTrades for why the difference matters. */
+export function isTerminalBisqState(raw) {
+  return /BTC_CONFIRMED|CANCEL|REJECT|FAILED/.test(String(raw ?? ''));
+}
 
 /** Map a raw Bisq trade-state string to our enum. Order in BISQ_STATE_MAP
  *  matters: most-advanced states are listed first so the first substring hit
@@ -61,7 +98,7 @@ export class BisqAdapter extends OnrampAdapter {
   /**
    * @param {Object} opts
    * @param {string} [opts.restBaseUrl='http://127.0.0.1:8090/api/v1']
-   * @param {string} [opts.wsUrl='ws://127.0.0.1:8090/websocket']
+   * @param {string} [opts.wsUrl]  defaults to the WebSocket of restBaseUrl
    * @param {import('./wallet.js').Wallet} opts.wallet  wallet seam (required)
    * @param {string} [opts.network='mainnet']  chain the node runs on (display + address checks)
    * @param {string} [opts.nickName='cryptobridge']  identity nickname if one must be created
@@ -78,7 +115,9 @@ export class BisqAdapter extends OnrampAdapter {
    */
   constructor({
     restBaseUrl = 'http://127.0.0.1:8090/api/v1',
-    wsUrl = 'ws://127.0.0.1:8090/websocket',
+    // Derived from restBaseUrl, not a fixed default: the two must address the
+    // same node. See wsUrlForRestBase.
+    wsUrl = wsUrlForRestBase(restBaseUrl),
     wallet,
     network = 'mainnet',
     nickName = 'cryptobridge',
@@ -111,6 +150,7 @@ export class BisqAdapter extends OnrampAdapter {
     this.statusSubs = new Set();
     this.tradeSubs = new Map();      // tradeId -> Set<cb>
     this.tradeProps = new Map();     // tradeId -> merged {tradeState, paymentAccountData, ...}
+    this.tradeSnapshotSeen = false;  // has the node sent its initial trade snapshot yet?
     this.lastEmitted = new Map();    // tradeId -> last mapped TradeState emitted
     this.trades = new Map();         // tradeId -> our Trade shape (fiat/base amounts, offer)
     this.pendingBtcAddress = new Map(); // tradeId -> address to send once phase allows
@@ -572,7 +612,7 @@ export class BisqAdapter extends OnrampAdapter {
     // The "type" discriminator is REQUIRED — without it the server silently
     // drops the subscription ("No service found").
     sock.send(JSON.stringify({ type: 'SubscriptionRequest', requestId: 'sub-trades', topic: 'TRADES', parameter: null }));
-    sock.send(JSON.stringify({ type: 'SubscriptionRequest', requestId: 'sub-props', topic: 'TRADE_PROPERTIES', parameter: null }));
+    sock.send(JSON.stringify({ type: 'SubscriptionRequest', requestId: WS_SUB_ID, topic: 'TRADE_PROPERTIES', parameter: null }));
     this._setStatus('connected');
   }
 
@@ -589,10 +629,31 @@ export class BisqAdapter extends OnrampAdapter {
   _onWsFrame(raw) {
     let frame;
     try { frame = JSON.parse(raw); } catch { return; }
-    if (frame.topic !== 'TRADE_PROPERTIES') return;   // TRADES handled implicitly via props
+    /* Two frame shapes carry trade properties, and we used to handle only one.
+     *
+     * The node answers a SubscriptionRequest with a SubscriptionResponse whose
+     * payload is a snapshot of EVERY trade it knows about -- measured against
+     * a live 2.1.11 node: `{type:"SubscriptionResponse", requestId:"sub-props",
+     * payload:"[{tradeId:{...}}, ...]"}`, with no `topic` field at all.
+     * Subsequent changes arrive as topic-tagged events.
+     *
+     * Testing `frame.topic !== 'TRADE_PROPERTIES'` therefore dropped the
+     * snapshot on the floor, which is precisely the data needed to find your
+     * way back into a trade you already paid for. Match the response by the
+     * requestId we sent, and events by topic. */
+    const isSnapshot = frame.type === 'SubscriptionResponse' && frame.requestId === WS_SUB_ID;
+    if (!isSnapshot && frame.topic !== 'TRADE_PROPERTIES') return;
+    if (isSnapshot && frame.errorMessage) {
+      console.error('trade subscription failed:', frame.errorMessage);
+      this.tradeSnapshotSeen = true;   // it is not coming; do not make callers wait
+      return;
+    }
+    if (isSnapshot) this.tradeSnapshotSeen = true;
     // Dedupe replays by sequenceNumber (monotonic per topic within a session).
+    // The snapshot has none and must never be deduped against the event
+    // stream -- it is the baseline the events are deltas against.
     const seq = frame.sequenceNumber;
-    if (typeof seq === 'number') {
+    if (!isSnapshot && typeof seq === 'number') {
       const last = this.lastSeq.get(frame.topic);
       if (last != null && seq <= last) return;
       this.lastSeq.set(frame.topic, seq);
@@ -607,6 +668,58 @@ export class BisqAdapter extends OnrampAdapter {
         if (!delta || typeof delta !== 'object') continue;
         this._applyTradeDelta(tradeId, delta);
       }
+    }
+  }
+
+  /** Trades the node still considers live.
+   *
+   *  Everything here comes from the snapshot the node sends when we subscribe
+   *  -- there is no REST endpoint to ask: the API has no GET /trades at all
+   *  (it answers 500), only POST to take one and PATCH to advance it. So this
+   *  is empty until the WebSocket is up, which is why it is async and waits
+   *  for the subscription rather than reading a possibly-empty map.
+   *
+   *  The snapshot carries tradeState, the seller's account text and the
+   *  bitcoin address, but no amounts -- so a resumed trade can show what to
+   *  do next and who to pay, and the UI must not promise a figure it does not
+   *  have. */
+  async listOpenTrades() {
+    await this._waitForTradeSnapshot();
+    const out = [];
+    for (const [id, props] of this.tradeProps.entries()) {
+      const raw = props?.tradeState;
+      if (!raw) continue;
+      if (isTerminalBisqState(raw)) continue;
+      /* Deliberately NOT `if (!mapBisqState(raw)) continue`. Bisq's state
+       * strings are compound and there are more of them than we map -- the
+       * one that exposed this bug was
+       * TAKER_RECEIVED_TAKE_OFFER_RESPONSE__BUYER_SENT_BTC_ADDRESS__BUYER_DID_NOT_RECEIVED_ACCOUNT_DATA,
+       * which mapped to null and made the trade vanish from this list.
+       *
+       * Dropping a trade we cannot label is the worst possible failure here:
+       * the user may already have sent the money, and the app would show them
+       * nothing at all. An unmapped state is listed with state null, and the
+       * UI says "in progress" rather than inventing a step. */
+      const state = mapBisqState(raw);
+      out.push({
+        id,
+        state,
+        rawState: raw,
+        sellerDetails: props.paymentAccountData ?? null,
+        receiveAddress: props.bitcoinPaymentData ?? null,
+      });
+    }
+    return out;
+  }
+
+  /** Resolve once the subscription snapshot has arrived (or we give up). The
+   *  snapshot is a single frame right after the handshake, so this is a short
+   *  wait, not a poll of an indefinite stream. */
+  async _waitForTradeSnapshot(timeoutMs = 5000) {
+    if (this.tradeSnapshotSeen) return;
+    const started = Date.now();
+    while (!this.tradeSnapshotSeen && Date.now() - started < timeoutMs) {
+      await sleep(50);
     }
   }
 
