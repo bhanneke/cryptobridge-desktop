@@ -25,6 +25,44 @@ jobs:
       - name: E2E (mock flow, system Chrome)
         run: npm run test:e2e
 
+  # Nothing else here builds the thing a user actually receives. Without this
+  # the packaged app can break -- a bad CSP, an asset path that only resolves
+  # under the dev server, a capability that stops being granted -- while every
+  # other job stays green.
+  bundle:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      # --bundles app, not the default: the DMG step shells out to AppleScript
+      # to arrange the Finder window, which cannot work on a runner with no
+      # GUI session. The .app is the artifact that matters.
+      - name: Build the app bundle
+        run: npm run build -- --bundles app
+      - name: Assert the bundle exists and is not a stub
+        run: |
+          APP="src-tauri/target/release/bundle/macos/CryptoBridge.app"
+          test -d "$APP" || { echo "::error::no bundle was produced at $APP"; exit 1; }
+          BIN="$APP/Contents/MacOS/cryptobridge-desktop"
+          test -x "$BIN" || { echo "::error::bundle has no executable"; exit 1; }
+          SIZE=$(du -sk "$APP" | cut -f1)
+          echo "bundle size: ${SIZE}KB"
+          # A real build is ~15MB; anything tiny means the frontend or the
+          # binary did not make it in.
+          test "$SIZE" -gt 4000 || { echo "::error::bundle is only ${SIZE}KB — something is missing"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CryptoBridge-macos-unsigned
+          path: src-tauri/target/release/bundle/macos/CryptoBridge.app
+          if-no-files-found: error
+
   rust:
     runs-on: ubuntu-latest
     steps:
