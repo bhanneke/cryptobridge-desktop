@@ -450,3 +450,21 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod connect_screen_tests {
+    use super::*;
+
+    /// The connect screen probes these two before anything is configured. If
+    /// the allowlist ever stops accepting them, the packaged app silently
+    /// loses its only way to reach a real node.
+    #[test]
+    fn the_connect_screen_probe_paths_are_allowed() {
+        for p in [
+            "http://127.0.0.1:8090/api/v1/settings/version",
+            "http://127.0.0.1:8090/api/v1/explorer/selected",
+        ] {
+            assert!(check_url(p, Kind::Http).is_ok(), "probe path rejected: {p}");
+        }
+    }
+}
