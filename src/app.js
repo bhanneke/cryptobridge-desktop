@@ -537,7 +537,9 @@ function renderWallet() {
 
   $('#walletNone').hidden        = !(builtin && st && !st.exists);
   $('#walletBackupWrap').hidden  = !(builtin && st && st.exists && !st.backedUp);
-  $('#walletReady').hidden       = !(builtin && st && st.exists && st.backedUp);
+  const ready = builtin && st && st.exists && st.backedUp;
+  $('#walletReady').hidden = !ready;
+  if (ready) startWalletSync();
   $('#walletExternalWrap').hidden = builtin;
 
   // The escape hatch only appears when there is something to switch to.
@@ -546,6 +548,46 @@ function renderWallet() {
   toggle.textContent = builtin
     ? 'I already have a wallet — let me paste an address'
     : 'Use the wallet CryptoBridge made for me';
+}
+
+/* Chain sync: started once the wallet is real and backed up, then polled for
+ * display. Kept out of renderWallet's hot path -- it must never block the
+ * screen, and a chain that will not sync is a bad day, not a broken app. */
+let walletSyncStarted = false;
+let walletSyncTimer = null;
+
+function startWalletSync() {
+  if (walletSyncStarted || !builtinWallet) return;
+  walletSyncStarted = true;
+  builtinWallet.startSync().catch((e) => console.error('sync did not start:', e.message));
+  const tick = async () => {
+    try { renderWalletBalance(await builtinWallet.getBalance()); }
+    catch (e) { console.error('balance read failed:', e.message); }
+  };
+  tick();
+  walletSyncTimer = setInterval(tick, 5000);
+}
+
+function renderWalletBalance(b) {
+  const el = $('#walletBalance');
+  if (!el) return;
+  if (b.error) {
+    el.dataset.state = 'error';
+    el.textContent = `Balance unavailable — ${b.error}`;
+  } else if (!b.synced) {
+    el.dataset.state = 'syncing';
+    // Explicitly not "0 BTC": someone who just bought bitcoin would read a
+    // zero as the money being gone.
+    el.textContent = b.syncing
+      ? 'Checking the Bitcoin network over Tor…'
+      : 'Balance not checked yet.';
+  } else {
+    el.dataset.state = 'ok';
+    const btc = satsToBtc(b.confirmedSats ?? 0);
+    const pending = (b.pendingSats ?? 0) > 0 ? ` · ${fmtBTC(satsToBtc(b.pendingSats))} pending` : '';
+    el.textContent = `Balance ${fmtBTC(btc)}${pending}`;
+  }
+  el.hidden = false;
 }
 
 async function onCreateWallet() {

@@ -88,13 +88,49 @@ test('the shell refusing to hand out an address is surfaced, not swallowed', asy
   await assert.rejects(() => w.getReceiveAddress(), /back up your recovery phrase/);
 });
 
-test('balance is unknown, not zero — a zero would read as "the money is gone"', async () => {
-  const w = new BuiltinWallet(fakeApi(), 'mainnet');
+test('before the first sync update, balance is unknown rather than zero', async () => {
+  // The distinction that matters: someone who just bought bitcoin reads a
+  // displayed "0" as the money being gone.
+  const w = new BuiltinWallet(fakeApi({ wallet_sync_status: { running: true, synced: false } }), 'mainnet');
   const b = await w.getBalance();
   assert.equal(b.confirmedSats, null);
   assert.equal(b.pendingSats, null);
   assert.equal(b.synced, false);
+  assert.equal(b.syncing, true);
   assert.notEqual(b.confirmedSats, 0);
+});
+
+test('once synced, the real figures come through', async () => {
+  const w = new BuiltinWallet(
+    fakeApi({ wallet_sync_status: { running: true, synced: true, confirmed_sats: 234000, pending_sats: 1000 } }),
+    'mainnet',
+  );
+  const b = await w.getBalance();
+  assert.equal(b.confirmedSats, 234000);
+  assert.equal(b.pendingSats, 1000);
+  assert.equal(b.synced, true);
+});
+
+test('a synced wallet that really holds nothing reports zero, not unknown', async () => {
+  const w = new BuiltinWallet(fakeApi({ wallet_sync_status: { running: true, synced: true } }), 'mainnet');
+  const b = await w.getBalance();
+  assert.equal(b.confirmedSats, 0, 'synced-and-empty is a fact, not an unknown');
+  assert.equal(b.synced, true);
+});
+
+test('a shell that cannot answer degrades to unknown instead of throwing', async () => {
+  const w = new BuiltinWallet(fakeApi({ wallet_sync_status: new Error('no such command') }), 'mainnet');
+  const b = await w.getBalance();
+  assert.equal(b.confirmedSats, null);
+  assert.equal(b.synced, false);
+});
+
+test('sync errors reach the UI so it can say why there is no balance', async () => {
+  const w = new BuiltinWallet(
+    fakeApi({ wallet_sync_status: { running: false, synced: false, last_error: 'Is tor running?' } }),
+    'mainnet',
+  );
+  assert.match((await w.getBalance()).error, /tor/);
 });
 
 test('withdraw refuses with something the user can actually act on', async () => {

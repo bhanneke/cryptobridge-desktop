@@ -32,3 +32,6 @@ tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "s
 # Neither pulls in a TLS stack -- the no-TLS CI check must stay green.
 bdk_wallet = { version = "3.1", features = ["keys-bip39", "rusqlite"] }
 keyring = "4"
+# Compact block filters (BIP157/158) so the wallet learns its balance without
+# any server being told which addresses are ours, routed through Tor's SOCKS5.
+bdk_kyoto = "0.17"

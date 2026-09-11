@@ -75,11 +75,37 @@ export class BuiltinWallet {
     return address;
   }
 
-  /** We do not read the chain yet, so we genuinely do not know the balance.
-   *  Reporting null is the honest answer; the UI must render it as "held in
-   *  your wallet", never as zero — a zero would read as "the money is gone". */
+  /** Start syncing the chain in the background. Idempotent. Always over Tor:
+   *  the shell has no clearnet fallback, so if Tor is not running this
+   *  reports an error rather than quietly leaking our addresses to peers. */
+  async startSync() {
+    return this.invoke('wallet_start_sync', { network: this.network });
+  }
+
+  async syncStatus() {
+    return this.invoke('wallet_sync_status');
+  }
+
+  /** The balance, and whether it means anything yet.
+   *
+   *  Until the first update lands, confirmedSats is null, NOT zero. A zero
+   *  reads to someone who just sent money as "it is gone"; null lets the UI
+   *  say "not synced yet", which is what is actually true. */
   async getBalance() {
-    return { confirmedSats: null, pendingSats: null, external: false, synced: false };
+    let s;
+    try {
+      s = await this.syncStatus();
+    } catch {
+      return { confirmedSats: null, pendingSats: null, external: false, synced: false, syncing: false };
+    }
+    return {
+      confirmedSats: s?.synced ? (s.confirmed_sats ?? 0) : null,
+      pendingSats: s?.synced ? (s.pending_sats ?? 0) : null,
+      external: false,
+      synced: !!s?.synced,
+      syncing: !!s?.running,
+      error: s?.last_error ?? null,
+    };
   }
 
   async withdraw() {

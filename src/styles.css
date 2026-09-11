@@ -439,3 +439,9 @@ button.backend-pill:focus-visible { outline: 2px solid #6366F1; outline-offset: 
   .resume-banner { flex-wrap: wrap; }
   .resume-banner .btn-secondary { width: 100%; }
 }
+.wallet-ready-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.wallet-balance {
+  margin: 0; font-size: 13px; color: #0B1220;
+  font-variant-numeric: tabular-nums;
+}
+.wallet-balance[data-state="syncing"], .wallet-balance[data-state="error"] { color: #5B6478; }

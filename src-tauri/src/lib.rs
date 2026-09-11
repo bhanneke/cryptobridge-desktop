@@ -203,7 +203,7 @@ async fn pump(app: AppHandle, id: u32, stream: proxy::BisqWs, mut rx: mpsc::Unbo
 pub fn run() {
     tauri::Builder::default()
         .manage(Net::new())
-        .manage(wallet::WalletState::new())
+        .manage(std::sync::Arc::new(wallet::WalletState::new()))
         .invoke_handler(tauri::generate_handler![
             bisq_http,
             bisq_ws_open,
@@ -213,7 +213,9 @@ pub fn run() {
             wallet::wallet_create,
             wallet::wallet_reveal_mnemonic,
             wallet::wallet_confirm_backup,
-            wallet::wallet_next_address
+            wallet::wallet_next_address,
+            wallet::wallet_start_sync,
+            wallet::wallet_sync_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

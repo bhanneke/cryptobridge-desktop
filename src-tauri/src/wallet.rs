@@ -33,7 +33,7 @@
 //      is what the backup ceremony exists to communicate.
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use bdk_wallet::bitcoin::bip32::Xpriv;
 use bdk_wallet::bitcoin::Network;
@@ -58,7 +58,33 @@ const PURPOSE: u32 = 84;
 
 #[derive(Default)]
 pub struct WalletState {
-    inner: Mutex<Option<Loaded>>,
+    /// An async mutex because the chain-sync task holds it across awaits.
+    /// Locks are taken briefly -- once to build the client, then once per
+    /// update -- so a sync in progress never blocks handing out an address.
+    inner: tokio::sync::Mutex<Option<Loaded>>,
+    /// A plain mutex: nothing awaits while this one is held.
+    sync: Mutex<SyncShared>,
+}
+
+/// What the UI is told about chain sync.
+#[derive(Default, Clone, Serialize)]
+pub struct SyncStatus {
+    /// A sync task is alive.
+    pub running: bool,
+    /// At least one update has been applied, so the balance means something.
+    /// Until then the UI must say "not synced", never "0 BTC" -- a zero reads
+    /// as "the money is gone".
+    pub synced: bool,
+    pub confirmed_sats: u64,
+    pub pending_sats: u64,
+    /// Set when sync stopped. Most often: Tor is not running.
+    pub last_error: Option<String>,
+}
+
+#[derive(Default)]
+struct SyncShared {
+    status: SyncStatus,
+    started_for: Option<Network>,
 }
 
 struct Loaded {
@@ -73,6 +99,12 @@ struct Loaded {
 impl WalletState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    fn set_sync<F: FnOnce(&mut SyncStatus)>(&self, f: F) {
+        if let Ok(mut g) = self.sync.lock() {
+            f(&mut g.status);
+        }
     }
 }
 
@@ -189,15 +221,15 @@ fn load_from_mnemonic(
 
 /// Load the wallet for `network` if one exists. Safe to call on every startup.
 #[tauri::command]
-pub fn wallet_status(
+pub async fn wallet_status(
     app: AppHandle,
-    state: State<'_, WalletState>,
+    state: State<'_, Arc<WalletState>>,
     network: String,
 ) -> Result<WalletStatus, String> {
     let net = parse_network(&network)?;
     let backed_up = backup_marker(&app, net)?.exists();
 
-    let mut guard = state.inner.lock().map_err(|_| "wallet lock poisoned")?;
+    let mut guard = state.inner.lock().await;
     if guard.as_ref().map(|l| l.network) != Some(net) {
         // Not loaded (or loaded for a different network). Try the keychain.
         match keyring_entry(net)?.get_password() {
@@ -229,9 +261,9 @@ pub fn wallet_status(
 /// overwriting a recovery phrase is how people lose coins, so it is never
 /// something a stray call can do.
 #[tauri::command]
-pub fn wallet_create(
+pub async fn wallet_create(
     app: AppHandle,
-    state: State<'_, WalletState>,
+    state: State<'_, Arc<WalletState>>,
     network: String,
 ) -> Result<WalletStatus, String> {
     let net = parse_network(&network)?;
@@ -253,7 +285,7 @@ pub fn wallet_create(
         .map_err(|e| format!("could not save the recovery phrase: {e}"))?;
 
     let loaded = load_from_mnemonic(&app, &mnemonic, net)?;
-    let mut guard = state.inner.lock().map_err(|_| "wallet lock poisoned")?;
+    let mut guard = state.inner.lock().await;
     *guard = Some(loaded);
 
     Ok(WalletStatus {
@@ -315,9 +347,9 @@ pub fn wallet_confirm_backup(
 /// A fresh receive address. Called once per trade, so every trade lands on a
 /// different address and they cannot be linked on-chain.
 #[tauri::command]
-pub fn wallet_next_address(
+pub async fn wallet_next_address(
     app: AppHandle,
-    state: State<'_, WalletState>,
+    state: State<'_, Arc<WalletState>>,
     network: String,
 ) -> Result<NewAddress, String> {
     let net = parse_network(&network)?;
@@ -328,7 +360,7 @@ pub fn wallet_next_address(
         return Err("back up your recovery phrase before receiving bitcoin".into());
     }
 
-    let mut guard = state.inner.lock().map_err(|_| "wallet lock poisoned")?;
+    let mut guard = state.inner.lock().await;
     let loaded = guard
         .as_mut()
         .filter(|l| l.network == net)
@@ -344,6 +376,121 @@ pub fn wallet_next_address(
         address: info.address.to_string(),
         index: info.index,
     })
+}
+
+// --- chain sync over Tor ----------------------------------------------------
+//
+// Compact block filters (BIP157/158) via Kyoto: the node downloads filters and
+// matches our scripts locally, so no server is ever told which addresses are
+// ours. That is the whole reason for choosing this over an Esplora or Electrum
+// backend, which would have to be handed the address set.
+//
+// Tor is not optional and there is no clearnet fallback. If the SOCKS proxy is
+// not there, sync fails and says so. Quietly syncing in the clear would
+// announce every address we care about to whichever peers we connected to --
+// the precise leak compact block filters exist to prevent.
+
+use bdk_kyoto::bip157::Socks5Proxy;
+use bdk_kyoto::builder::{Builder as KyotoBuilder, BuilderExt};
+use bdk_kyoto::ScanType;
+use crate::proxy::TOR_SOCKS;
+
+/// Begin syncing in the background. Idempotent: calling it twice for the same
+/// network does not start a second node.
+#[tauri::command]
+pub async fn wallet_start_sync(
+    state: State<'_, Arc<WalletState>>,
+    network: String,
+) -> Result<SyncStatus, String> {
+    let net = parse_network(&network)?;
+    let shared: Arc<WalletState> = Arc::clone(&state);
+
+    {
+        let mut g = shared.sync.lock().map_err(|_| "sync lock poisoned")?;
+        if g.started_for == Some(net) && g.status.running {
+            return Ok(g.status.clone());
+        }
+        g.started_for = Some(net);
+        g.status = SyncStatus {
+            running: true,
+            ..Default::default()
+        };
+    }
+
+    let task_state = Arc::clone(&shared);
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = sync_loop(Arc::clone(&task_state), net).await {
+            task_state.set_sync(|s| {
+                s.running = false;
+                s.last_error = Some(e);
+            });
+        } else {
+            task_state.set_sync(|s| s.running = false);
+        }
+    });
+
+    let g = shared.sync.lock().map_err(|_| "sync lock poisoned")?;
+    Ok(g.status.clone())
+}
+
+/// The balance, and whether it means anything yet.
+#[tauri::command]
+pub fn wallet_sync_status(state: State<'_, Arc<WalletState>>) -> Result<SyncStatus, String> {
+    let g = state.sync.lock().map_err(|_| "sync lock poisoned")?;
+    Ok(g.status.clone())
+}
+
+async fn sync_loop(state: Arc<WalletState>, network: Network) -> Result<(), String> {
+    // Build the client while holding the wallet briefly, then let go: the loop
+    // below must not keep the wallet locked while waiting on the network, or
+    // asking for a receive address would block until the next block.
+    let (client, mut subscriber) = {
+        let mut g = state.inner.lock().await;
+        let loaded = g
+            .as_mut()
+            .filter(|l| l.network == network)
+            .ok_or("no wallet loaded for this network")?;
+
+        let light = KyotoBuilder::new(network)
+            .socks5_proxy(Socks5Proxy::local())
+            .build_with_wallet(&loaded.wallet, ScanType::Sync)
+            .map_err(|e| format!("could not build the chain client: {e}"))?;
+        let (client, _requester, subscriber) = light.subscribe();
+        (client, subscriber)
+    };
+
+    client.start();
+
+    loop {
+        let update = subscriber
+            .update()
+            .await
+            .map_err(|e| format!("chain sync stopped: {e}. Is tor running on {TOR_SOCKS}?"))?;
+
+        let mut g = state.inner.lock().await;
+        let Some(loaded) = g.as_mut().filter(|l| l.network == network) else {
+            return Ok(()); // the wallet went away (network switched); stop quietly
+        };
+        loaded
+            .wallet
+            .apply_update(update)
+            .map_err(|e| format!("could not apply a chain update: {e}"))?;
+        loaded
+            .wallet
+            .persist(&mut loaded.conn)
+            .map_err(|e| format!("could not save chain data: {e}"))?;
+
+        let balance = loaded.wallet.balance();
+        drop(g);
+
+        state.set_sync(|st| {
+            st.synced = true;
+            st.confirmed_sats = balance.confirmed.to_sat();
+            st.pending_sats =
+                balance.trusted_pending.to_sat() + balance.untrusted_pending.to_sat();
+            st.last_error = None;
+        });
+    }
 }
 
 #[cfg(test)]

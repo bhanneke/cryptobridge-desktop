@@ -218,8 +218,11 @@
             <!-- Ready. -->
             <div id="walletReady" class="wallet-card wallet-card--ready" hidden>
               <span class="material-symbols-outlined text-[18px]" aria-hidden="true">account_balance_wallet</span>
-              <p><strong>Your CryptoBridge wallet is ready.</strong> Each trade uses a brand-new
-                 address, so your purchases cannot be tied together by anyone watching the chain.</p>
+              <div class="wallet-ready-body">
+                <p><strong>Your CryptoBridge wallet is ready.</strong> Each trade uses a brand-new
+                   address, so your purchases cannot be tied together by anyone watching the chain.</p>
+                <p id="walletBalance" class="wallet-balance" hidden></p>
+              </div>
             </div>
 
             <!-- Bring your own address. -->
@@ -366,10 +369,10 @@
           <div class="custody-note">
             <span class="material-symbols-outlined text-[18px]">key_off</span>
             <p>
-              <strong>CryptoBridge does not track your balance.</strong> The bitcoin is in your own
-              wallet, not with us — we never had custody of it and cannot see, move or freeze it.
-              Confirm the arrival in your wallet, and verify the transaction on a block explorer
-              of your choosing.
+              <strong>We never had custody of this bitcoin.</strong> It went straight to your own
+              wallet and we cannot move or freeze it. If you used the built-in wallet, the balance
+              it shows is read from the Bitcoin network on this computer, over Tor — no server is
+              told which addresses are yours. You can verify the transaction on any block explorer.
             </p>
           </div>
 
