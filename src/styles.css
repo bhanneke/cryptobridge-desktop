@@ -464,3 +464,13 @@ button.backend-pill:focus-visible { outline: 2px solid #6366F1; outline-offset: 
 .send-summary .row { display: flex; justify-content: space-between; gap: 12px; }
 .send-summary .row.total { border-top: 1px solid #E6E8EE; padding-top: 6px; color: #0B1220; font-weight: 600; }
 .send-summary .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
+
+/* ---------- Node supervision (connect screen) ---------- */
+.node-block {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 12px 14px; border-radius: 12px;
+  background: #F7F8FA; border: 1px solid #E6E8EE;
+}
+.node-detail { margin: 0; font-size: 13px; line-height: 1.45; color: #5B6478; }
+.node-detail[data-kind="ok"] { color: #0F6B4F; }
+.node-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }

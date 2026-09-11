@@ -14,6 +14,7 @@
 // Bisq's pairing flow for nodes with authorizationRequired=true.
 
 pub mod proxy;
+pub mod node;
 pub mod wallet;
 
 use std::collections::HashMap;
@@ -204,6 +205,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(Net::new())
         .manage(std::sync::Arc::new(wallet::WalletState::new()))
+        .manage(node::NodeState::new())
         .invoke_handler(tauri::generate_handler![
             bisq_http,
             bisq_ws_open,
@@ -218,7 +220,10 @@ pub fn run() {
             wallet::wallet_sync_status,
             wallet::wallet_fee_floor,
             wallet::wallet_send_preview,
-            wallet::wallet_send_confirm
+            wallet::wallet_send_confirm,
+            node::node_status,
+            node::node_start,
+            node::node_stop
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

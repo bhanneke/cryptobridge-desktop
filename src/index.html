@@ -409,6 +409,19 @@
       </div>
 
       <div class="connect-body">
+        <!-- If we can start a node ourselves, offer that before asking the
+             user to go and find one. -->
+        <div id="nodeBlock" class="node-block" hidden>
+          <p id="nodeDetail" class="node-detail"></p>
+          <div class="node-actions">
+            <button id="nodeStartBtn" type="button" class="btn-secondary" hidden>
+              <span class="material-symbols-outlined text-[18px]" aria-hidden="true">play_arrow</span>
+              Start a node for me
+            </button>
+            <button id="nodeStopBtn" type="button" class="wallet-toggle" hidden>Stop the node</button>
+          </div>
+        </div>
+
         <div class="flex flex-col gap-2">
           <label for="connectUrl" class="text-[13px] font-medium text-ink2">Node address</label>
           <input id="connectUrl" type="text" spellcheck="false" autocomplete="off" autocapitalize="none"

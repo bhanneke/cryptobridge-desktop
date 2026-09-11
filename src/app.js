@@ -274,6 +274,7 @@ function openConnect() {
   connectResult('', '');
   o.classList.add('show');
   o.setAttribute('aria-hidden', 'false');
+  refreshNode();
   $('#connectUrl').focus();
 }
 
@@ -281,6 +282,54 @@ function closeConnect() {
   const o = $('#connectOverlay');
   o.classList.remove('show');
   o.setAttribute('aria-hidden', 'true');
+}
+
+/* The node the app talks to. We can start one if the machine has Bisq; if it
+ * does not, saying so precisely beats "could not connect". */
+async function refreshNode() {
+  const block = $('#nodeBlock');
+  if (!tauriApi()) { block.hidden = true; return; }   // browser: nothing to supervise
+  let st;
+  try {
+    st = await tauriApi().invoke('node_status');
+  } catch (e) {
+    block.hidden = true;
+    return;
+  }
+  block.hidden = false;
+  const detail = $('#nodeDetail');
+  if (st.running) {
+    detail.dataset.kind = 'ok';
+    detail.textContent = `A Bisq node is running (started by this app, pid ${st.pid}).`;
+  } else {
+    detail.dataset.kind = '';
+    detail.textContent = st.detail || 'A Bisq node is installed and ready to start.';
+  }
+  // Only offer to start what we can actually start.
+  $('#nodeStartBtn').hidden = st.running || !st.installed || !st.java;
+  $('#nodeStopBtn').hidden = !st.running;
+  if (st.api_url && !$('#connectUrl').value) $('#connectUrl').value = st.api_url;
+}
+
+async function onNodeStart() {
+  const btn = $('#nodeStartBtn');
+  btn.disabled = true;
+  connectResult('', 'Starting the Bisq node — this takes a moment…');
+  try {
+    await tauriApi().invoke('node_start', { clearnet: false });
+    connectResult('', 'Node starting. Give it a moment, then connect.');
+  } catch (e) {
+    connectResult('error', e?.message || String(e));
+  } finally {
+    btn.disabled = false;
+    refreshNode();
+  }
+}
+
+async function onNodeStop() {
+  try { await tauriApi().invoke('node_stop'); }
+  catch (e) { connectResult('error', e?.message || String(e)); }
+  refreshNode();
 }
 
 async function onConnect() {
@@ -835,6 +884,8 @@ function bindAmountStep() {
   });
   $('#backendPill').addEventListener('click', openConnect);
   $('#connectBtn').addEventListener('click', onConnect);
+  $('#nodeStartBtn').addEventListener('click', onNodeStart);
+  $('#nodeStopBtn').addEventListener('click', onNodeStop);
   $('#connectDemoBtn').addEventListener('click', onUseDemo);
   $('#connectOverlay').addEventListener('click', (e) => {
     // Click the backdrop to dismiss — but only once a backend is chosen, so
