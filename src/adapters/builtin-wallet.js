@@ -108,11 +108,41 @@ export class BuiltinWallet {
     };
   }
 
-  async withdraw() {
-    throw new Error(
-      'Sending is not available yet. Your bitcoin is in your wallet and you ' +
-      'control it — to spend it now, recover it with your phrase in any ' +
-      'bitcoin wallet.',
-    );
+  // --- spending ------------------------------------------------------------
+  //
+  // Two steps, always. previewSend builds the exact transaction and keeps it
+  // in the shell; confirmSend signs and broadcasts that same one. Rebuilding
+  // at confirm time could pick different inputs and a different fee than the
+  // one the user agreed to, and this is money that does not come back.
+
+  /** Lowest fee rate our peers will relay, in sat/vB. A light client cannot
+   *  honestly predict confirmation times, so this is a floor, not advice. */
+  async feeFloor() {
+    return this.invoke('wallet_fee_floor');
+  }
+
+  /** Build a transaction and report what it would cost. Signs nothing. */
+  async previewSend(address, amountSats, feeRateSatVb) {
+    return this.invoke('wallet_send_preview', {
+      network: this.network,
+      address: String(address ?? '').trim(),
+      amountSats,
+      feeRateSatVb,
+    });
+  }
+
+  /** Sign and broadcast the previewed transaction. The token is single-use,
+   *  so a double-click cannot pay twice. @returns {Promise<string>} txid */
+  async confirmSend(token) {
+    if (!token) throw new Error('Nothing to send — build the transaction first.');
+    return this.invoke('wallet_send_confirm', { token });
+  }
+
+  /** Interface method, kept for completeness. The UI must not use this: it
+   *  sends without showing anyone a fee. Use previewSend/confirmSend. */
+  async withdraw(address, amountSats, { feeRateSatVb } = {}) {
+    if (!feeRateSatVb) throw new Error('withdraw needs an explicit fee rate');
+    const preview = await this.previewSend(address, amountSats, feeRateSatVb);
+    return this.confirmSend(preview.token);
   }
 }

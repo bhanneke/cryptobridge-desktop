@@ -222,6 +222,7 @@
                 <p><strong>Your CryptoBridge wallet is ready.</strong> Each trade uses a brand-new
                    address, so your purchases cannot be tied together by anyone watching the chain.</p>
                 <p id="walletBalance" class="wallet-balance" hidden></p>
+                <button id="walletOpenBtn" type="button" class="wallet-toggle">Open your wallet</button>
               </div>
             </div>
 
@@ -446,6 +447,55 @@
           Explore with the built-in demo
         </button>
         <p class="text-[12px] text-muted text-center">Fake offers, fake sellers, no real money and no real bitcoin.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Wallet: balance and sending -->
+  <div id="walletOverlay" class="modal" role="dialog" aria-modal="true" aria-labelledby="walletTitle" aria-hidden="true">
+    <div class="modal-card connect-card">
+      <div class="pay-head">
+        <span class="pay-badge material-symbols-outlined" aria-hidden="true">account_balance_wallet</span>
+        <div>
+          <h2 id="walletTitle" class="text-[19px] font-semibold tracking-tight leading-tight">Your wallet</h2>
+          <p class="text-[13px] text-ink2 mt-0.5">Keys stay on this computer. Balances are read over Tor, so no server is told which addresses are yours.</p>
+        </div>
+      </div>
+
+      <div class="connect-body">
+        <p id="walletModalBalance" class="wallet-modal-balance">—</p>
+
+        <div class="flex flex-col gap-2">
+          <label for="sendAddress" class="text-[13px] font-medium text-ink2">Send to</label>
+          <input id="sendAddress" type="text" spellcheck="false" autocomplete="off" autocapitalize="none"
+            placeholder="bc1…"
+            class="w-full h-12 px-4 bg-surface border border-line rounded-xl2 text-[14px] font-mono placeholder:text-muted focus:outline-none focus:border-indigo focus:shadow-ring transition" />
+        </div>
+
+        <div class="send-row">
+          <div class="flex flex-col gap-2">
+            <label for="sendAmount" class="text-[13px] font-medium text-ink2">Amount (BTC)</label>
+            <input id="sendAmount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00000000"
+              class="w-full h-12 px-4 bg-surface border border-line rounded-xl2 text-[14px] tabular-nums placeholder:text-muted focus:outline-none focus:border-indigo focus:shadow-ring transition" />
+          </div>
+          <div class="flex flex-col gap-2">
+            <label for="sendFee" class="text-[13px] font-medium text-ink2">Fee (sat/vB)</label>
+            <input id="sendFee" type="text" inputmode="numeric" autocomplete="off" placeholder="2"
+              class="w-full h-12 px-4 bg-surface border border-line rounded-xl2 text-[14px] tabular-nums placeholder:text-muted focus:outline-none focus:border-indigo focus:shadow-ring transition" />
+          </div>
+        </div>
+        <p id="sendFeeHint" class="text-[12px] text-muted">We cannot honestly predict how long a fee will take to confirm — this is the lowest rate your peers will relay.</p>
+
+        <p id="sendResult" class="connect-result" hidden></p>
+
+        <!-- Review first. The transaction shown here is the one that gets
+             signed; it is not rebuilt on confirm. -->
+        <button id="sendReviewBtn" type="button" class="btn-secondary w-full">Review the transaction</button>
+        <div id="sendConfirmWrap" hidden class="flex flex-col gap-2">
+          <div id="sendSummary" class="send-summary"></div>
+          <button id="sendConfirmBtn" type="button" class="btn-primary w-full">Send it</button>
+          <button id="sendCancelBtn" type="button" class="wallet-toggle">Cancel</button>
+        </div>
       </div>
     </div>
   </div>

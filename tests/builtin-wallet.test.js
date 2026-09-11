@@ -133,13 +133,52 @@ test('sync errors reach the UI so it can say why there is no balance', async () 
   assert.match((await w.getBalance()).error, /tor/);
 });
 
-test('withdraw refuses with something the user can actually act on', async () => {
-  const w = new BuiltinWallet(fakeApi(), 'mainnet');
-  await assert.rejects(() => w.withdraw('bc1qwhatever', 1000), (e) => {
-    assert.match(e.message, /not available yet/);
-    assert.match(e.message, /recover it with your phrase/, 'must say how to spend it anyway');
-    return true;
-  });
+// ---- spending -------------------------------------------------------------
+
+test('previewSend builds but never sends', async () => {
+  const api = fakeApi({ wallet_send_preview: { token: 'tok1', address: 'bc1qdest', amount_sats: 50000, fee_sats: 320, total_sats: 50320 } });
+  const w = new BuiltinWallet(api, 'mainnet');
+  const p = await w.previewSend('  bc1qdest  ', 50000, 4);
+  assert.equal(p.total_sats, 50320);
+  assert.equal(api.calls.length, 1);
+  assert.equal(api.calls[0].cmd, 'wallet_send_preview', 'preview must not broadcast');
+  assert.equal(api.calls[0].args.address, 'bc1qdest', 'address is trimmed');
+  assert.equal(api.calls[0].args.feeRateSatVb, 4);
+});
+
+test('confirmSend sends the previewed transaction by token', async () => {
+  const api = fakeApi({ wallet_send_confirm: 'abc123txid' });
+  const w = new BuiltinWallet(api, 'mainnet');
+  assert.equal(await w.confirmSend('tok1'), 'abc123txid');
+  assert.deepEqual(api.calls[0], { cmd: 'wallet_send_confirm', args: { token: 'tok1' } });
+});
+
+test('confirmSend with no token refuses before reaching the shell', async () => {
+  const api = fakeApi();
+  const w = new BuiltinWallet(api, 'mainnet');
+  await assert.rejects(() => w.confirmSend(''), /build the transaction first/);
+  await assert.rejects(() => w.confirmSend(undefined), /build the transaction first/);
+  assert.equal(api.calls.length, 0);
+});
+
+test('a spent token is refused by the shell, so a double-click cannot pay twice', async () => {
+  const w = new BuiltinWallet(fakeApi({ wallet_send_confirm: new Error('that transaction has expired — build it again') }), 'mainnet');
+  await assert.rejects(() => w.confirmSend('used'), /expired/);
+});
+
+test('withdraw refuses without an explicit fee rate rather than guessing one', async () => {
+  const api = fakeApi();
+  const w = new BuiltinWallet(api, 'mainnet');
+  await assert.rejects(() => w.withdraw('bc1qdest', 1000), /explicit fee rate/);
+  assert.equal(api.calls.length, 0, 'must not build anything');
+});
+
+test('a send that the network rejects surfaces the reason', async () => {
+  const w = new BuiltinWallet(
+    fakeApi({ wallet_send_confirm: new Error('not connected to the Bitcoin network — cannot broadcast (is tor running?)') }),
+    'mainnet',
+  );
+  await assert.rejects(() => w.confirmSend('tok'), /is tor running/);
 });
 
 test('confirmBackup rejects an empty phrase before bothering the shell', async () => {

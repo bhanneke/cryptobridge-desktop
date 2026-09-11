@@ -21,6 +21,7 @@ import { MockAdapter } from './adapters/mock-adapter.js';
 import { BisqAdapter } from './adapters/bisq-adapter.js';
 import { ExternalWallet, isValidBtcAddress } from './adapters/wallet.js';
 import { BuiltinWallet } from './adapters/builtin-wallet.js';
+import { btcToSats } from './adapters/amount.js';
 import { tauriApi, pickTransport } from './adapters/transport.js';
 import { normaliseNodeUrl, probeNode } from './adapters/node-probe.js';
 import { qrSvg } from './vendor/qr.js';
@@ -590,6 +591,106 @@ function renderWalletBalance(b) {
   el.hidden = false;
 }
 
+let sendToken = null;
+
+function sendResult(kind, message) {
+  const el = $('#sendResult');
+  el.hidden = !message;
+  el.textContent = message || '';
+  if (message) el.dataset.kind = kind;
+}
+
+async function openWallet() {
+  const o = $('#walletOverlay');
+  o.classList.add('show');
+  o.setAttribute('aria-hidden', 'false');
+  sendResult('', '');
+  $('#sendConfirmWrap').hidden = true;
+  sendToken = null;
+  try {
+    const b = await builtinWallet.getBalance();
+    $('#walletModalBalance').textContent = b.synced
+      ? `${fmtBTC(satsToBtc(b.confirmedSats ?? 0))} available`
+      : (b.error ? `Balance unavailable — ${b.error}` : 'Checking the Bitcoin network over Tor…');
+  } catch { $('#walletModalBalance').textContent = 'Balance unavailable.'; }
+  try {
+    const floor = await builtinWallet.feeFloor();
+    if (!$('#sendFee').value) $('#sendFee').value = String(Math.max(1, floor));
+    $('#sendFeeHint').textContent =
+      `Your peers will relay at ${floor} sat/vB or above. We cannot honestly predict how long any fee takes to confirm.`;
+  } catch { /* not synced yet; the user can still type a rate */ }
+}
+
+function closeWallet() {
+  const o = $('#walletOverlay');
+  o.classList.remove('show');
+  o.setAttribute('aria-hidden', 'true');
+  sendToken = null;
+}
+
+async function onSendReview() {
+  const address = $('#sendAddress').value.trim();
+  const sats = btcToSats($('#sendAmount').value);
+  const fee = Number.parseInt($('#sendFee').value, 10);
+  if (!address) return sendResult('error', 'Enter the address you are sending to.');
+  if (sats == null || sats <= 0) return sendResult('error', 'Enter an amount in BTC, to at most 8 decimal places.');
+  if (!Number.isFinite(fee) || fee <= 0) return sendResult('error', 'Enter a fee rate in sat/vB.');
+
+  const btn = $('#sendReviewBtn');
+  btn.disabled = true;
+  sendResult('', 'Building the transaction…');
+  try {
+    const p = await builtinWallet.previewSend(address, sats, fee);
+    sendToken = p.token;
+    $('#sendSummary').innerHTML = '';
+    const rows = [
+      ['To', p.address, true],
+      ['Amount', fmtBTC(satsToBtc(p.amount_sats)), false],
+      ['Network fee', fmtBTC(satsToBtc(p.fee_sats)), false],
+    ];
+    for (const [label, value, mono] of rows) {
+      const div = document.createElement('div');
+      div.className = 'row';
+      const l = document.createElement('span'); l.textContent = label;
+      const v = document.createElement('span'); v.textContent = value; if (mono) v.className = 'mono';
+      div.append(l, v); $('#sendSummary').appendChild(div);
+    }
+    const total = document.createElement('div');
+    total.className = 'row total';
+    const tl = document.createElement('span'); tl.textContent = 'Total leaving your wallet';
+    const tv = document.createElement('span'); tv.textContent = fmtBTC(satsToBtc(p.total_sats));
+    total.append(tl, tv); $('#sendSummary').appendChild(total);
+
+    $('#sendConfirmWrap').hidden = false;
+    sendResult('warn', 'This cannot be undone once sent. Check the address.');
+  } catch (e) {
+    sendToken = null;
+    $('#sendConfirmWrap').hidden = true;
+    sendResult('error', e?.message || 'Could not build that transaction.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function onSendConfirm() {
+  if (!sendToken) return;
+  const btn = $('#sendConfirmBtn');
+  btn.disabled = true;
+  sendResult('', 'Sending…');
+  try {
+    const txid = await builtinWallet.confirmSend(sendToken);
+    sendToken = null;                       // single use, enforced in the shell too
+    $('#sendConfirmWrap').hidden = true;
+    $('#sendAddress').value = '';
+    $('#sendAmount').value = '';
+    sendResult('ok', `Sent. Transaction ${txid}`);
+  } catch (e) {
+    sendResult('error', e?.message || 'The transaction was not sent.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function onCreateWallet() {
   const btn = $('#walletCreateBtn');
   const err = $('#walletCreateError');
@@ -723,6 +824,15 @@ function bindAmountStep() {
   $('#amountInput').addEventListener('input', validateAmountStep);
   $('#addrInput').addEventListener('input', validateAmountStep);
   $('#resumeBtn').addEventListener('click', onResume);
+  $('#walletOpenBtn').addEventListener('click', openWallet);
+  $('#sendReviewBtn').addEventListener('click', onSendReview);
+  $('#sendConfirmBtn').addEventListener('click', onSendConfirm);
+  $('#sendCancelBtn').addEventListener('click', () => {
+    $('#sendConfirmWrap').hidden = true; sendToken = null; sendResult('', '');
+  });
+  $('#walletOverlay').addEventListener('click', (e) => {
+    if (e.target === $('#walletOverlay')) closeWallet();
+  });
   $('#backendPill').addEventListener('click', openConnect);
   $('#connectBtn').addEventListener('click', onConnect);
   $('#connectDemoBtn').addEventListener('click', onUseDemo);

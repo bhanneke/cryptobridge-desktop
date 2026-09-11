@@ -215,7 +215,10 @@ pub fn run() {
             wallet::wallet_confirm_backup,
             wallet::wallet_next_address,
             wallet::wallet_start_sync,
-            wallet::wallet_sync_status
+            wallet::wallet_sync_status,
+            wallet::wallet_fee_floor,
+            wallet::wallet_send_preview,
+            wallet::wallet_send_confirm
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

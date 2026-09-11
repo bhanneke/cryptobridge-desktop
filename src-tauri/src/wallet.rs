@@ -85,6 +85,18 @@ pub struct SyncStatus {
 struct SyncShared {
     status: SyncStatus,
     started_for: Option<Network>,
+    /// Kyoto's handle for talking to the network. Present only while sync is
+    /// running -- which is also the only time we can broadcast, so a send
+    /// without sync says so rather than failing obscurely.
+    requester: Option<bdk_kyoto::Requester>,
+    /// Transactions built and shown to the user, awaiting their confirmation.
+    /// Keyed by a token handed back with the preview.
+    pending: std::collections::HashMap<String, PendingSend>,
+}
+
+struct PendingSend {
+    psbt: bdk_wallet::bitcoin::Psbt,
+    network: Network,
 }
 
 struct Loaded {
@@ -455,11 +467,18 @@ async fn sync_loop(state: Arc<WalletState>, network: Network) -> Result<(), Stri
             .socks5_proxy(Socks5Proxy::local())
             .build_with_wallet(&loaded.wallet, ScanType::Sync)
             .map_err(|e| format!("could not build the chain client: {e}"))?;
-        let (client, _requester, subscriber) = light.subscribe();
+        let (client, _logging, subscriber) = light.subscribe();
         (client, subscriber)
     };
 
-    client.start();
+    // start() moves the client into its active state; requester() then takes
+    // the handle out of it. Keeping that handle is what makes broadcasting
+    // possible at all -- a send needs the same connection the sync uses.
+    let active = client.start();
+    let requester = active.requester();
+    if let Ok(mut g) = state.sync.lock() {
+        g.requester = Some(requester);
+    }
 
     loop {
         let update = subscriber
@@ -491,6 +510,178 @@ async fn sync_loop(state: Arc<WalletState>, network: Network) -> Result<(), Stri
             st.last_error = None;
         });
     }
+}
+
+// --- spending ---------------------------------------------------------------
+//
+// Two steps on purpose. `wallet_send_preview` builds and keeps the exact
+// transaction; `wallet_send_confirm` signs and broadcasts that same one. A
+// single call that rebuilt at confirm time could select different UTXOs and
+// charge a different fee than the one the user agreed to. For irreversible
+// money the thing you approved has to be the thing that is signed.
+
+use bdk_wallet::bitcoin::{Address, Amount, FeeRate as BdkFeeRate};
+use bdk_wallet::SignOptions;
+
+#[derive(Serialize)]
+pub struct SendPreview {
+    /// Hand back to wallet_send_confirm to actually send this.
+    pub token: String,
+    pub address: String,
+    pub amount_sats: u64,
+    pub fee_sats: u64,
+    pub total_sats: u64,
+}
+
+/// The lowest fee rate our peers will relay, in sat/vB. A light client cannot
+/// estimate confirmation times honestly, so this is a floor, not advice.
+#[tauri::command]
+pub async fn wallet_fee_floor(state: State<'_, Arc<WalletState>>) -> Result<u64, String> {
+    let requester = {
+        let g = state.sync.lock().map_err(|_| "sync lock poisoned")?;
+        g.requester.clone()
+    };
+    let requester = requester.ok_or("not connected to the Bitcoin network yet")?;
+    let rate = requester
+        .broadcast_min_feerate()
+        .await
+        .map_err(|e| format!("could not ask the network for a fee floor: {e}"))?;
+    Ok(rate.to_sat_per_vb_ceil())
+}
+
+/// Build a transaction and show what it would cost. Signs nothing, sends
+/// nothing.
+#[tauri::command]
+pub async fn wallet_send_preview(
+    state: State<'_, Arc<WalletState>>,
+    network: String,
+    address: String,
+    amount_sats: u64,
+    fee_rate_sat_vb: u64,
+) -> Result<SendPreview, String> {
+    let net = parse_network(&network)?;
+
+    // Parse and network-check the destination before anything else. A valid
+    // address for the wrong chain is the mistake that silently burns money.
+    let parsed = address
+        .trim()
+        .parse::<Address<_>>()
+        .map_err(|e| format!("that is not a bitcoin address: {e}"))?
+        .require_network(net)
+        .map_err(|_| format!("that address is not valid on {network}"))?;
+
+    if amount_sats == 0 {
+        return Err("enter an amount to send".into());
+    }
+    let fee_rate = BdkFeeRate::from_sat_per_vb(fee_rate_sat_vb)
+        .ok_or("that fee rate is not usable")?;
+
+    let mut guard = state.inner.lock().await;
+    let loaded = guard
+        .as_mut()
+        .filter(|l| l.network == net)
+        .ok_or("no wallet loaded for this network")?;
+
+    let mut builder = loaded.wallet.build_tx();
+    builder
+        .add_recipient(parsed.script_pubkey(), Amount::from_sat(amount_sats))
+        .fee_rate(fee_rate);
+    let psbt = builder
+        .finish()
+        .map_err(|e| format!("could not build the transaction: {e}"))?;
+
+    let fee = psbt
+        .fee()
+        .map_err(|e| format!("could not work out the fee: {e}"))?
+        .to_sat();
+    drop(guard);
+
+    // A token rather than an index: it is handed to the webview, and a
+    // guessable handle to "sign this" is not something to leave lying around.
+    let token = {
+        use bdk_wallet::bitcoin::hashes::{sha256, Hash};
+        let nonce: [u8; 16] = rand_bytes();
+        sha256::Hash::hash(&nonce).to_string()
+    };
+
+    {
+        let mut g = state.sync.lock().map_err(|_| "sync lock poisoned")?;
+        // One pending send at a time: a queue of half-approved transactions is
+        // a way to send the wrong one.
+        g.pending.clear();
+        g.pending.insert(
+            token.clone(),
+            PendingSend {
+                psbt,
+                network: net,
+            },
+        );
+    }
+
+    Ok(SendPreview {
+        token,
+        address: parsed.to_string(),
+        amount_sats,
+        fee_sats: fee,
+        total_sats: amount_sats.saturating_add(fee),
+    })
+}
+
+/// Sign and broadcast the transaction the user was shown.
+#[tauri::command]
+pub async fn wallet_send_confirm(
+    state: State<'_, Arc<WalletState>>,
+    token: String,
+) -> Result<String, String> {
+    // Take it out: a token is single-use, so a double-click cannot pay twice.
+    let pending = {
+        let mut g = state.sync.lock().map_err(|_| "sync lock poisoned")?;
+        g.pending.remove(&token)
+    };
+    let mut pending = pending.ok_or("that transaction has expired — build it again")?;
+
+    let requester = {
+        let g = state.sync.lock().map_err(|_| "sync lock poisoned")?;
+        g.requester.clone()
+    };
+    let requester = requester
+        .ok_or("not connected to the Bitcoin network — cannot broadcast (is tor running?)")?;
+
+    let tx = {
+        let mut guard = state.inner.lock().await;
+        let loaded = guard
+            .as_mut()
+            .filter(|l| l.network == pending.network)
+            .ok_or("no wallet loaded for this network")?;
+
+        let finished = loaded
+            .wallet
+            .sign(&mut pending.psbt, SignOptions::default())
+            .map_err(|e| format!("could not sign: {e}"))?;
+        if !finished {
+            return Err("the transaction could not be fully signed".into());
+        }
+        pending
+            .psbt
+            .clone()
+            .extract_tx()
+            .map_err(|e| format!("could not finalise the transaction: {e}"))?
+    };
+
+    let txid = tx.compute_txid();
+    requester
+        .submit_package(tx)
+        .await
+        .map_err(|e| format!("the network would not accept the transaction: {e}"))?;
+    Ok(txid.to_string())
+}
+
+/// 16 random bytes from the OS.
+fn rand_bytes() -> [u8; 16] {
+    use bdk_wallet::bitcoin::key::rand::RngCore;
+    let mut b = [0u8; 16];
+    bdk_wallet::bitcoin::key::rand::thread_rng().fill_bytes(&mut b);
+    b
 }
 
 #[cfg(test)]

@@ -445,3 +445,22 @@ button.backend-pill:focus-visible { outline: 2px solid #6366F1; outline-offset: 
   font-variant-numeric: tabular-nums;
 }
 .wallet-balance[data-state="syncing"], .wallet-balance[data-state="error"] { color: #5B6478; }
+
+/* ---------- Wallet modal (balance + send) ---------- */
+.wallet-modal-balance {
+  margin: 0; padding: 12px 14px; border-radius: 12px;
+  background: #F7F8FA; border: 1px solid #E6E8EE;
+  font-size: 16px; font-weight: 600; color: #0B1220;
+  font-variant-numeric: tabular-nums;
+}
+.send-row { display: grid; grid-template-columns: 1fr 140px; gap: 12px; }
+@media (max-width: 520px) { .send-row { grid-template-columns: 1fr; } }
+.send-summary {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 12px 14px; border-radius: 12px;
+  background: #F7F8FA; border: 1px solid #E6E8EE;
+  font-size: 13px; color: #5B6478;
+}
+.send-summary .row { display: flex; justify-content: space-between; gap: 12px; }
+.send-summary .row.total { border-top: 1px solid #E6E8EE; padding-top: 6px; color: #0B1220; font-weight: 600; }
+.send-summary .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
