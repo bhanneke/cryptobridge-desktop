@@ -50,6 +50,18 @@
       <!-- STEP 1 — Welcome                              -->
       <!-- ============================================ -->
       <section data-step="1" class="step active">
+        <!-- A trade left running from a previous session. Shown before
+             anything else on the screen: someone who has already sent money
+             should not have to find this. -->
+        <div id="resumeBanner" class="resume-banner" hidden>
+          <span class="material-symbols-outlined text-[20px]" aria-hidden="true">history</span>
+          <div class="resume-body">
+            <p class="resume-title">You have a trade in progress</p>
+            <p id="resumeDetail" class="resume-detail"></p>
+          </div>
+          <button id="resumeBtn" type="button" class="btn-secondary">Open it</button>
+        </div>
+
         <div class="relative flex flex-col items-center text-center gap-8 py-8">
           <!-- Ambient aurora backdrop -->
           <div class="aurora" aria-hidden="true">

@@ -38,6 +38,7 @@ const state = {
   walletMode: 'external',// 'builtin' once we know the shell can host a wallet
   walletStatus: null,    // {exists, backedUp} for the built-in wallet, null until checked
   trade: null,           // the live trade, once taken (step 4)
+  resumable: null,       // a trade left running from a previous session
 };
 
 // ---------------------------------------------------------------
@@ -679,6 +680,7 @@ function validateAmountStep() {
 function bindAmountStep() {
   $('#amountInput').addEventListener('input', validateAmountStep);
   $('#addrInput').addEventListener('input', validateAmountStep);
+  $('#resumeBtn').addEventListener('click', onResume);
   $('#backendPill').addEventListener('click', openConnect);
   $('#connectBtn').addEventListener('click', onConnect);
   $('#connectDemoBtn').addEventListener('click', onUseDemo);
@@ -981,11 +983,22 @@ async function runTrade() {
   const fiatAmountEur = state.amountEur;
   const trade = await adapter.takeOffer(offer.id, { fiatAmountEur });
   state.trade = trade;
+  await watchTrade(trade.id, fiatAmountEur);
+}
 
+/** Follow a trade to its end: pause at the fiat leg, then see it through.
+ *
+ * Split out of runTrade so resuming can reuse it. A resumed trade joins
+ * wherever it already is -- the subscription fires immediately with the
+ * current state, so a trade already past the fiat leg simply does not stop
+ * there. `fiatAmountEur` may be null on resume: the node's trade snapshot
+ * carries no amounts, and the payment screen must show what is real rather
+ * than invent a figure. */
+async function watchTrade(tradeId, fiatAmountEur) {
   const btn = $('#confirmBridgeBtn');
   let shownPayment = false;
   await new Promise((resolve, reject) => {
-    const unsub = adapter.subscribeTrade(trade.id, async (tradeState, updated) => {
+    const unsub = adapter.subscribeTrade(tradeId, async (tradeState, updated) => {
       if (updated) state.trade = updated;
       if (TRADE_LABELS[tradeState]) {
         btn.innerHTML = `<span class="spinner"></span> ${TRADE_LABELS[tradeState]}`;
@@ -995,8 +1008,8 @@ async function runTrade() {
         // user to make the SEPA transfer from their own bank.
         if (tradeState === TradeState.AWAITING_FIAT_PAYMENT && !shownPayment) {
           shownPayment = true;
-          const instr = await adapter.getPaymentInstructions(trade.id);
-          await presentPayment(trade.id, instr, fiatAmountEur);
+          const instr = await adapter.getPaymentInstructions(tradeId);
+          await presentPayment(tradeId, instr, fiatAmountEur);
         }
         if (tradeState === TradeState.FIAT_RECEIVED) {
           paymentPhase('wait', 'Seller confirmed the payment — releasing your bitcoin…');
@@ -1004,7 +1017,7 @@ async function runTrade() {
         if (tradeState === TradeState.BTC_RELEASED) {
           // Non-custodial backends (BisqAdapter) don't auto-assert receipt.
           if (typeof adapter.confirmBtcReceived === 'function' && adapter.autoConfirmBtcReceipt !== true) {
-            await presentReceive(trade.id);
+            await presentReceive(tradeId);
           } else {
             paymentPhase('wait', 'Finalising the trade…');
           }
@@ -1016,6 +1029,61 @@ async function runTrade() {
       }
     });
   });
+}
+
+// ---------------------------------------------------------------
+// Resuming a trade left running from a previous session
+// ---------------------------------------------------------------
+
+const RESUME_LABELS = {
+  [TradeState.OFFER_TAKEN]:           'waiting for the seller’s bank details',
+  [TradeState.AWAITING_FIAT_PAYMENT]: 'waiting for your SEPA transfer',
+  [TradeState.FIAT_SENT]:             'waiting for the seller to confirm your payment',
+  [TradeState.FIAT_RECEIVED]:         'seller confirmed — bitcoin being released',
+  [TradeState.BTC_RELEASED]:          'bitcoin released',
+};
+
+async function checkForOpenTrades() {
+  if (typeof adapter.listOpenTrades !== 'function') return;
+  let open = [];
+  try {
+    open = await adapter.listOpenTrades();
+  } catch (e) {
+    // Never let this break startup: it is an extra, and the user can still
+    // begin a new trade.
+    console.error('could not list open trades:', e.message);
+    return;
+  }
+  if (!open.length) return;
+
+  const t = open[0];
+  state.resumable = t;
+  // An unmapped state is deliberately possible — see listOpenTrades. Say
+  // something true and vague rather than inventing a step.
+  const label = (t.state && RESUME_LABELS[t.state]) || 'in progress';
+  $('#resumeDetail').textContent =
+    `${label}${t.sellerDetails ? ` · ${t.sellerDetails}` : ''}`;
+  $('#resumeBanner').hidden = false;
+}
+
+async function onResume() {
+  const t = state.resumable;
+  if (!t) return;
+  const btn = $('#resumeBtn');
+  btn.disabled = true;
+  try {
+    $('#resumeBanner').hidden = true;
+    setStep(4);
+    // No amount: the node's snapshot carries none, and showing a made-up
+    // figure next to someone's money would be worse than showing none.
+    await watchTrade(t.id, null);
+    setStep(5);
+  } catch (e) {
+    console.error('resume failed:', e.message);
+    $('#resumeBanner').hidden = false;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function bindTakeOffer() {
@@ -1165,6 +1233,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   bindTakeOffer();
   bindNewTrade();
   if (!(await applyDeepLink())) setStep(1);
+
+  // Once the backend is up, see whether a trade was left running. Deliberately
+  // not awaited before the first paint: the app stays usable while the node
+  // is still connecting.
+  adapterReady?.then(checkForOpenTrades).catch(() => {});
 
   /* First run in the packaged app: ask what to connect to, because there is no
    * other way to say. Not in a browser -- there the query string still works,
