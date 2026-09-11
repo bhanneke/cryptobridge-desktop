@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { normaliseNodeUrl, networkFromExplorer, probeNode } from '../src/adapters/node-probe.js';
+import { normaliseNodeUrl, networkFromExplorer, probeNode, isV3Onion } from '../src/adapters/node-probe.js';
 
 function transportFor(responses) {
   const calls = [];
@@ -44,8 +44,10 @@ test('an empty address asks for one instead of throwing', () => {
   assert.match(normaliseNodeUrl(null).error, /Enter the address/);
 });
 
-test('https is refused, because the shell has no TLS backend at all', () => {
-  assert.match(normaliseNodeUrl('https://127.0.0.1:8090').error, /Only http/);
+test('https is refused: no TLS backend exists, and neither leg needs one', () => {
+  assert.match(normaliseNodeUrl('https://127.0.0.1:8090').error, /https is not supported/);
+  assert.match(normaliseNodeUrl('https://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion:8090').error,
+    /https is not supported/);
 });
 
 test('credentials in the URL are refused rather than silently forwarded', () => {
@@ -156,4 +158,38 @@ test('a broken explorer endpoint does not fail an otherwise good connection', as
   assert.equal(r.ok, true);
   assert.equal(r.explorer, null);
   assert.equal(r.networkHint, null);
+});
+
+// ---- onion addresses: a remote node reached through Tor -------------------
+
+const ONION = 'abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx';
+
+test('a v3 onion address is accepted as a node location', () => {
+  assert.equal(normaliseNodeUrl(`${ONION}.onion:8090`).url, `http://${ONION}.onion:8090/api/v1`);
+  assert.equal(normaliseNodeUrl(`http://${ONION}.onion:8090/api/v1`).url, `http://${ONION}.onion:8090/api/v1`);
+});
+
+test('isV3Onion accepts only the v3 shape', () => {
+  assert.equal(isV3Onion(`${ONION}.onion`), true);
+  assert.equal(isV3Onion(`${ONION.toUpperCase()}.ONION`), true, 'case-insensitive');
+  assert.equal(isV3Onion('abcdefghijklmnop.onion'), false, 'v2 is deprecated');
+  assert.equal(isV3Onion('notanonion.com'), false);
+  assert.equal(isV3Onion(''), false);
+  assert.equal(isV3Onion(null), false);
+  // base32 excludes 0, 1, 8, 9.
+  assert.equal(isV3Onion(`${ONION.slice(0, 54)}10.onion`), false);
+});
+
+/* Allowing one name shape must not have reopened hostnames in general: the
+ * proxy still refuses them so that it never performs a DNS lookup. These are
+ * the same cases the Rust tests cover, kept in step on purpose. */
+test('allowing onion did not reopen ordinary hostnames', () => {
+  for (const h of ['localhost:1', 'evil.example:1', 'bisq.local:1',
+                   'notanonion.onion.evil.example:1', 'example.com.onion.co:1']) {
+    assert.ok(normaliseNodeUrl(h).error, `hostname accepted: ${h}`);
+  }
+});
+
+test('a v2 onion is refused with a reason, not a generic error', () => {
+  assert.match(normaliseNodeUrl('abcdefghijklmnop.onion:8090').error, /not a v3 onion address/);
 });

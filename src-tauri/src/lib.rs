@@ -37,7 +37,7 @@ enum SockCmd {
 
 /// Shell-owned network state. The webview holds only opaque socket ids.
 pub struct Net {
-    client: reqwest::Client,
+    client: proxy::Clients,
     sockets: Mutex<HashMap<u32, mpsc::UnboundedSender<SockCmd>>>,
     next_id: AtomicU32,
     /// Slots reserved for sockets that are open *or* mid-handshake. Counting
@@ -48,7 +48,7 @@ pub struct Net {
 impl Net {
     pub fn new() -> Self {
         Self {
-            client: proxy::build_client(),
+            client: proxy::Clients::new(),
             sockets: Mutex::new(HashMap::new()),
             next_id: AtomicU32::new(1),
             reserved: AtomicUsize::new(0),

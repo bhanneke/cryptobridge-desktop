@@ -18,8 +18,11 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.13.4", default-features = false, features = ["stream"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["stream", "socks"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "handshake"] }
+# SOCKS5 for the WebSocket leg to an onion service. Pulls in no TLS stack;
+# the no-TLS CI assertion must stay green.
+tokio-socks = "0.5"
 url = "2.5.8"
 futures-util = { version = "0.3.33", default-features = false, features = ["std", "sink"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }

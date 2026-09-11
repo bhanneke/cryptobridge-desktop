@@ -16,6 +16,15 @@
  *  against a real node; see bisq-adapter.js. */
 const AUTH_FAILURE = new Set([401, 403]);
 
+/** A v3 onion address: exactly 56 base32 characters plus ".onion". v2
+ *  addresses (16 characters) are deprecated and refused. Mirrors
+ *  check_onion_host in the Rust proxy — the two must agree, or the user is
+ *  refused by a layer they cannot see. */
+export function isV3Onion(hostname) {
+  const m = /^([a-z2-7]{56})\.onion$/.exec(String(hostname ?? '').toLowerCase());
+  return m !== null;
+}
+
 /** Literal loopback only: 127.0.0.0/8 or [::1]. Mirrors the Rust proxy. */
 export function isLoopbackLiteral(hostname) {
   const h = String(hostname ?? '').replace(/^\[|\]$/g, '');
@@ -46,9 +55,12 @@ export function normaliseNodeUrl(raw) {
   }
 
   if (u.protocol !== 'http:') {
-    // The shell's proxy only speaks plaintext to loopback, by design: with no
-    // TLS backend compiled in it cannot be turned into an exfiltration path.
-    return { error: 'Only http:// addresses on this computer are allowed.' };
+    /* Plaintext only, by design. On loopback there is nothing to encrypt; to
+     * an onion service the address *is* the service's public key, so the
+     * circuit is already end-to-end encrypted and authenticated. In neither
+     * case is the missing TLS a downgrade, and the shell has no TLS backend
+     * compiled in so it could not be an exfiltration path. */
+    return { error: 'Use an http:// address — https is not supported, and not needed here.' };
   }
   if (u.username || u.password) {
     return { error: 'Remove the username and password from the address.' };
@@ -58,11 +70,15 @@ export function normaliseNodeUrl(raw) {
    * resolution and DNS rebinding cannot walk it off the machine
    * (src-tauri/src/proxy.rs). Reject the same things here, or the user gets a
    * confusing failure from a layer they cannot see. */
-  if (!isLoopbackLiteral(u.hostname)) {
+  if (!isLoopbackLiteral(u.hostname) && !isV3Onion(u.hostname)) {
+    if (u.hostname === 'localhost') {
+      return { error: 'Use 127.0.0.1 instead of localhost — the app connects only to literal loopback addresses.' };
+    }
+    if (u.hostname.endsWith('.onion')) {
+      return { error: `"${u.hostname}" is not a v3 onion address (those are 56 characters before ".onion").` };
+    }
     return {
-      error: u.hostname === 'localhost'
-        ? 'Use 127.0.0.1 instead of localhost — the app connects only to literal loopback addresses.'
-        : `The node must be on this computer. Use 127.0.0.1, not "${u.hostname}".`,
+      error: `The node must be on this computer (127.0.0.1) or a v3 onion address, not "${u.hostname}".`,
     };
   }
 
