@@ -182,6 +182,48 @@ fn backup_marker(app: &AppHandle, network: Network) -> Result<PathBuf, String> {
     Ok(data_dir(app)?.join(format!("wallet-{network}.backed-up")))
 }
 
+/// Where the wallet's birthday lives: the chain tip as it was the first time
+/// this wallet saw the network.
+///
+/// Without it, chain sync starts at genesis. BDK gives a freshly created
+/// wallet a genesis checkpoint, Kyoto's ScanType::Sync starts from
+/// wallet.latest_checkpoint(), and so a wallet made this morning would
+/// download and match every compact filter since 2009. Nothing before the
+/// wallet existed can concern it.
+///
+/// Stored as "height:hash" in plain text. It is a public fact about the
+/// blockchain, not a secret, and a wrong value costs a rescan rather than
+/// money -- Kyoto validates the header chain regardless.
+fn birthday_path(app: &AppHandle, network: Network) -> Result<PathBuf, String> {
+    Ok(data_dir(app)?.join(format!("wallet-{network}.birthday")))
+}
+
+/// "height:hash". Pure, so the parsing can be tested: a birthday file that
+/// fails to parse silently sends sync back to genesis, which is slow rather
+/// than wrong and therefore easy not to notice.
+fn parse_birthday(text: &str) -> Option<bdk_kyoto::HashCheckpoint> {
+    let (h, hash) = text.trim().split_once(':')?;
+    bdk_kyoto::HashCheckpoint::try_from((h.trim().parse::<u32>().ok()?, hash.trim())).ok()
+}
+
+fn format_birthday(cp: &bdk_kyoto::HashCheckpoint) -> String {
+    format!("{}:{}", cp.height, cp.hash)
+}
+
+fn read_birthday(app: &AppHandle, network: Network) -> Option<bdk_kyoto::HashCheckpoint> {
+    let text = std::fs::read_to_string(birthday_path(app, network).ok()?).ok()?;
+    parse_birthday(&text)
+}
+
+fn write_birthday(
+    app: &AppHandle,
+    network: Network,
+    cp: &bdk_kyoto::HashCheckpoint,
+) -> Result<(), String> {
+    std::fs::write(birthday_path(app, network)?, format_birthday(cp))
+        .map_err(|e| format!("could not record the wallet birthday: {e}"))
+}
+
 /// Descriptors for a mnemonic. Returned as strings containing the xprv, so they
 /// are secret: they are handed straight to BDK and never logged, persisted or
 /// sent over IPC.
@@ -411,6 +453,7 @@ use crate::proxy::TOR_SOCKS;
 /// network does not start a second node.
 #[tauri::command]
 pub async fn wallet_start_sync(
+    app: AppHandle,
     state: State<'_, Arc<WalletState>>,
     network: String,
 ) -> Result<SyncStatus, String> {
@@ -431,7 +474,7 @@ pub async fn wallet_start_sync(
 
     let task_state = Arc::clone(&shared);
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = sync_loop(Arc::clone(&task_state), net).await {
+        if let Err(e) = sync_loop(Arc::clone(&task_state), app, net).await {
             task_state.set_sync(|s| {
                 s.running = false;
                 s.last_error = Some(e);
@@ -452,7 +495,65 @@ pub fn wallet_sync_status(state: State<'_, Arc<WalletState>>) -> Result<SyncStat
     Ok(g.status.clone())
 }
 
-async fn sync_loop(state: Arc<WalletState>, network: Network) -> Result<(), String> {
+/// Ask the network where the tip is, then stop.
+///
+/// A separate short-lived node because the checkpoint has to be chosen before
+/// the real client is built, and there is no "start at the tip" chain state.
+/// It costs one header pass; the alternative is shipping a hardcoded recent
+/// block hash, which ages and cannot be verified from here.
+async fn probe_chain_tip(network: Network) -> Result<bdk_kyoto::HashCheckpoint, String> {
+    let (node, client) = KyotoBuilder::new(network)
+        .socks5_proxy(Socks5Proxy::local())
+        .build();
+    let handle = tauri::async_runtime::spawn(async move {
+        let _ = node.run().await;
+    });
+    let tip = client.requester.chain_tip().await.map_err(|e| {
+        format!("could not reach the Bitcoin network to find the chain tip: {e}. Is tor running on {TOR_SOCKS}?")
+    });
+    let _ = client.requester.shutdown();
+    handle.abort();
+    tip
+}
+
+async fn sync_loop(
+    state: Arc<WalletState>,
+    app: AppHandle,
+    network: Network,
+) -> Result<(), String> {
+    // Where should filter matching start?
+    //
+    // A wallet this app created has no history, so the honest answer is "the
+    // tip when it was made". BDK hands a new wallet a genesis checkpoint and
+    // ScanType::Sync starts from there, which on mainnet means every filter
+    // since 2009. So: if the wallet has never seen a block, find the tip once,
+    // remember it, and scan from there ever after.
+    let fresh = {
+        let g = state.inner.lock().await;
+        g.as_ref()
+            .filter(|l| l.network == network)
+            .map(|l| l.wallet.latest_checkpoint().height() == 0)
+            .ok_or("no wallet loaded for this network")?
+    };
+
+    let scan_type = if fresh {
+        let cp = match read_birthday(&app, network) {
+            Some(cp) => cp,
+            None => {
+                let cp = probe_chain_tip(network).await?;
+                write_birthday(&app, network, &cp)?;
+                cp
+            }
+        };
+        ScanType::Recovery {
+            used_script_index: 0,
+            checkpoint: cp,
+        }
+    } else {
+        // The wallet has its own history now; carry on from where it got to.
+        ScanType::Sync
+    };
+
     // Build the client while holding the wallet briefly, then let go: the loop
     // below must not keep the wallet locked while waiting on the network, or
     // asking for a receive address would block until the next block.
@@ -465,7 +566,7 @@ async fn sync_loop(state: Arc<WalletState>, network: Network) -> Result<(), Stri
 
         let light = KyotoBuilder::new(network)
             .socks5_proxy(Socks5Proxy::local())
-            .build_with_wallet(&loaded.wallet, ScanType::Sync)
+            .build_with_wallet(&loaded.wallet, scan_type)
             .map_err(|e| format!("could not build the chain client: {e}"))?;
         let (client, _logging, subscriber) = light.subscribe();
         (client, subscriber)
@@ -771,6 +872,47 @@ mod tests {
         )
         .unwrap();
         assert_ne!(main_ext, test_ext);
+    }
+
+    // ---- wallet birthday --------------------------------------------------
+
+    /// The real mainnet genesis hash, so this is a round trip through a value
+    /// the bitcoin crate agrees with rather than a made-up string.
+    const A_REAL_HASH: &str = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
+
+    #[test]
+    fn a_birthday_survives_being_written_and_read_back() {
+        let cp = bdk_kyoto::HashCheckpoint::try_from((123_456u32, A_REAL_HASH)).unwrap();
+        let round = parse_birthday(&format_birthday(&cp)).expect("should parse");
+        assert_eq!(round.height, 123_456);
+        assert_eq!(round.hash, cp.hash);
+    }
+
+    #[test]
+    fn surrounding_whitespace_does_not_lose_the_birthday() {
+        let text = format!("  789 : {A_REAL_HASH}  \n");
+        let cp = parse_birthday(&text).expect("should tolerate whitespace");
+        assert_eq!(cp.height, 789);
+    }
+
+    /// A corrupt birthday must be refused, not half-read. Falling back to
+    /// genesis is slow rather than wrong, which is exactly why a silent
+    /// misparse here would go unnoticed.
+    #[test]
+    fn a_damaged_birthday_is_refused_rather_than_guessed() {
+        for bad in [
+            "",
+            "   ",
+            "nonsense",
+            "123456",                                   // no hash
+            &format!(":{A_REAL_HASH}"),                 // no height
+            &format!("-1:{A_REAL_HASH}"),               // negative height
+            &format!("notanumber:{A_REAL_HASH}"),
+            "123456:nothexatall",
+            "123456:00ff",                              // too short for a hash
+        ] {
+            assert!(parse_birthday(bad).is_none(), "accepted {bad:?}");
+        }
     }
 
     #[test]
