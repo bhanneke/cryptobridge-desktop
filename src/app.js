@@ -307,13 +307,6 @@ async function onConnect() {
       connectResult('error', probe.message);
       return;
     }
-    if (probe.ok && probe.networkHint && probe.networkHint !== network) {
-      // Advisory: a guess from the node's block explorer, not a fact.
-      connectResult('warn',
-        `This node looks like it is on ${probe.networkHint}, but you chose ${network}. ` +
-        `If that is wrong, the seller gets an address their node cannot pay.`);
-    }
-
     // Save, then actually connect — that, not the probe, is the proof.
     storeSetting(SETTING_KEYS.backend, 'bisq');
     storeSetting(SETTING_KEYS.node, norm.url);

@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { normaliseNodeUrl, networkFromExplorer, probeNode, isV3Onion } from '../src/adapters/node-probe.js';
+import { normaliseNodeUrl, probeNode, isV3Onion } from '../src/adapters/node-probe.js';
 
 function transportFor(responses) {
   const calls = [];
@@ -79,28 +79,13 @@ test('the whole 127/8 block is loopback, and 127 lookalikes are not', () => {
   assert.ok(normaliseNodeUrl('1270.0.0.1:1').error, '127-lookalike must not be accepted');
 });
 
-// ---- networkFromExplorer: advisory guess ---------------------------------
-
-test('guesses the network from the block explorer the node uses', () => {
-  assert.equal(networkFromExplorer('https://mempool.space'), 'mainnet');
-  assert.equal(networkFromExplorer('https://mempool.space/testnet'), 'testnet');
-  assert.equal(networkFromExplorer('https://mempool.space/signet/api'), 'signet');
-  assert.equal(networkFromExplorer('http://localhost:3002/regtest'), 'regtest');
-  assert.equal(networkFromExplorer(''), null);
-  assert.equal(networkFromExplorer(null), null);
-});
-
 // ---- probeNode: the three failures a user can act on ---------------------
 
 test('a reachable node reports its version', async () => {
-  const t = transportFor({
-    '/settings/version': { status: 200, body: JSON.stringify({ version: '2.1.9' }) },
-    '/explorer/selected': { status: 200, body: JSON.stringify({ provider: 'https://mempool.space' }) },
-  });
+  const t = transportFor({ '/settings/version': { status: 200, body: JSON.stringify({ version: '2.1.9' }) } });
   const r = await probeNode(t, 'http://127.0.0.1:8090/api/v1');
   assert.equal(r.ok, true);
   assert.equal(r.version, '2.1.9');
-  assert.equal(r.networkHint, 'mainnet');
 });
 
 test('nothing listening is reported as unreachable, not as a bad node', async () => {
@@ -136,10 +121,7 @@ test('a 200 that is not JSON is not mistaken for a node', async () => {
 });
 
 test('the probe never writes — only GETs, and only read-only paths', async () => {
-  const t = transportFor({
-    '/settings/version': { status: 200, body: JSON.stringify({ version: '2.1.9' }) },
-    '/explorer/selected': { status: 200, body: JSON.stringify({ provider: 'x' }) },
-  });
+  const t = transportFor({ '/settings/version': { status: 200, body: JSON.stringify({ version: '2.1.9' }) } });
   await probeNode(t, 'http://127.0.0.1:8090/api/v1');
   for (const c of t.calls) {
     assert.equal(c.method, 'GET', `probe must not ${c.method}`);
@@ -147,17 +129,6 @@ test('the probe never writes — only GETs, and only read-only paths', async () 
   // Specifically: it must never touch the endpoint that creates an identity.
   assert.ok(!t.calls.some((c) => c.url.includes('user-identities')),
     'the probe must not create a user identity on the node');
-});
-
-test('a broken explorer endpoint does not fail an otherwise good connection', async () => {
-  const t = transportFor({
-    '/settings/version': { status: 200, body: JSON.stringify({ version: '2.1.9' }) },
-    '/explorer/selected': new Error('boom'),
-  });
-  const r = await probeNode(t, 'http://127.0.0.1:8090/api/v1');
-  assert.equal(r.ok, true);
-  assert.equal(r.explorer, null);
-  assert.equal(r.networkHint, null);
 });
 
 // ---- onion addresses: a remote node reached through Tor -------------------

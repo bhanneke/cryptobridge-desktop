@@ -90,23 +90,22 @@ export function normaliseNodeUrl(raw) {
   return { url: `${u.protocol}//${u.host}${path}` };
 }
 
-/** Guess the network from the node's chosen block explorer. Advisory only —
- *  it is a heuristic about someone else's configuration, so it warns and never
- *  decides. */
-export function networkFromExplorer(explorerUrl) {
-  const s = String(explorerUrl ?? '').toLowerCase();
-  if (!s) return null;
-  if (s.includes('regtest')) return 'regtest';
-  if (s.includes('signet')) return 'signet';
-  if (s.includes('testnet') || s.includes('/testnet4')) return 'testnet';
-  return 'mainnet';
-}
+/* There was a network cross-check here, guessing the chain from the node's
+ * configured block explorer. It is gone, and should not come back.
+ *
+ * Measured against a real node (Bisq 2.1.11): a regtest setup reports
+ * "https://blockstream.info", a mainnet explorer. The setting is a UI
+ * preference and tracks nothing — Bisq Easy has no bitcoin chain of its own
+ * (the spike runs with no bitcoind at all), which is also why no DTO in the
+ * whole API carries a network field. So the check fired on a completely
+ * ordinary setup, and a warning that cries wolf on the standard case teaches
+ * people to click past the warnings that matter. */
 
 /**
  * @param {{request: Function}} transport
  * @param {string} restBaseUrl  already normalised
  * @param {{headers?: object}} opts
- * @returns {Promise<{ok:true, version:string|null, explorer:string|null, networkHint:string|null}
+ * @returns {Promise<{ok:true, version:string|null}
  *                 | {ok:false, reason:string, message:string}>}
  */
 export async function probeNode(transport, restBaseUrl, { headers } = {}) {
@@ -150,12 +149,5 @@ export async function probeNode(transport, restBaseUrl, { headers } = {}) {
     };
   }
 
-  // Advisory only: a failure here must never fail the connection.
-  let explorer = null;
-  try {
-    const r = await transport.request('GET', `${restBaseUrl}/explorer/selected`, undefined, headers);
-    if (r.status === 200) explorer = JSON.parse(r.body)?.provider ?? null;
-  } catch { /* the node is fine; we just learn less about it */ }
-
-  return { ok: true, version, explorer, networkHint: networkFromExplorer(explorer) };
+  return { ok: true, version };
 }
