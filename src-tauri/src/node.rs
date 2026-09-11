@@ -72,7 +72,15 @@ pub struct NodeStatus {
 /// CRYPTOBRIDGE_BISQ_APP is read from our own environment, not from the
 /// webview: it is for developers running from a checkout, and setting it
 /// requires access the webview does not have.
-fn find_node_binary() -> Option<PathBuf> {
+fn find_node_binary<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    // A node shipped with the app wins over anything else on the machine: it
+    // is the one we configured and the one we know the version of.
+    if let Ok(res) = app.path().resource_dir() {
+        let bundled = res.join("bisq").join("bin").join("api-app");
+        if is_node_binary(&bundled) {
+            return Some(bundled);
+        }
+    }
     if let Ok(p) = std::env::var("CRYPTOBRIDGE_BISQ_APP") {
         let p = PathBuf::from(p);
         if is_node_binary(&p) {
@@ -103,7 +111,17 @@ fn is_node_binary(p: &Path) -> bool {
 }
 
 /// A Java runtime to run it with. Bisq's launcher honours JAVA_HOME.
-fn find_java_home() -> Option<PathBuf> {
+///
+/// A bundled runtime is preferred: it is a jlink'd image containing only the
+/// modules Bisq needs (52 MB measured, against 336 MB for a full JDK), so we
+/// neither depend on the user having Java nor ship a third of a gigabyte.
+fn find_java_home<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    if let Ok(res) = app.path().resource_dir() {
+        let bundled = res.join("jre");
+        if bundled.join("bin").join("java").is_file() {
+            return Some(bundled);
+        }
+    }
     if let Ok(p) = std::env::var("JAVA_HOME") {
         let p = PathBuf::from(p);
         if p.join("bin").join("java").is_file() {
@@ -140,9 +158,9 @@ fn node_data_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
 // --- commands ---------------------------------------------------------------
 
 #[tauri::command]
-pub fn node_status(state: State<'_, NodeState>) -> NodeStatus {
-    let binary = find_node_binary();
-    let java = find_java_home();
+pub fn node_status<R: Runtime>(app: AppHandle<R>, state: State<'_, NodeState>) -> NodeStatus {
+    let binary = find_node_binary(&app);
+    let java = find_java_home(&app);
     let tor = tor_is_up();
 
     // reap: a child that exited should not still read as running
@@ -210,12 +228,12 @@ pub fn node_start<R: Runtime>(
         }
     };
     if already_running {
-        return Ok(node_status(state));
+        return Ok(node_status(app, state));
     }
 
-    let binary = find_node_binary()
+    let binary = find_node_binary(&app)
         .ok_or("No Bisq node found on this computer. Install Bisq 2, or start one yourself and connect to it.")?;
-    let java_home = find_java_home()
+    let java_home = find_java_home(&app)
         .ok_or("No Java runtime found to run Bisq with. Set JAVA_HOME.")?;
 
     let data_dir = node_data_dir(&app)?;
@@ -250,13 +268,16 @@ pub fn node_start<R: Runtime>(
         .map_err(|e| format!("could not start the Bisq node: {e}"))?;
 
     *state.child.lock().map_err(|_| "node lock poisoned")? = Some(child);
-    Ok(node_status(state))
+    Ok(node_status(app, state))
 }
 
 /// Stop the node we started. Never touches a node we did not start -- someone
 /// running their own should not have it killed by opening this app.
 #[tauri::command]
-pub fn node_stop(state: State<'_, NodeState>) -> Result<NodeStatus, String> {
+pub fn node_stop<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, NodeState>,
+) -> Result<NodeStatus, String> {
     {
         let mut guard = state.child.lock().map_err(|_| "node lock poisoned")?;
         if let Some(mut child) = guard.take() {
@@ -264,7 +285,7 @@ pub fn node_stop(state: State<'_, NodeState>) -> Result<NodeStatus, String> {
             let _ = child.wait();
         }
     }
-    Ok(node_status(state))
+    Ok(node_status(app, state))
 }
 
 #[cfg(test)]
@@ -283,15 +304,28 @@ mod tests {
             eprintln!("skipping: no Bisq build in the spike tree");
             return;
         }
+        // Discovery consults the bundle's resource directory first, so it
+        // needs an app handle; the mock runtime provides one without a window.
+        let app = tauri::test::mock_app();
+        let handle = app.handle();
+
         std::env::set_var("CRYPTOBRIDGE_BISQ_APP", real);
         std::env::set_var("CRYPTOBRIDGE_JAVA_HOME", jdk);
-        assert_eq!(find_node_binary().as_deref(), Some(real), "did not find the real api-app");
-        assert_eq!(find_java_home().as_deref(), Some(jdk), "did not find the real JDK");
+        assert_eq!(
+            find_node_binary(handle).as_deref(),
+            Some(real),
+            "did not find the real api-app"
+        );
+        assert_eq!(
+            find_java_home(handle).as_deref(),
+            Some(jdk),
+            "did not find the real JDK"
+        );
 
         // And a bogus override must not be accepted just because it is set.
         std::env::set_var("CRYPTOBRIDGE_BISQ_APP", "/bin/sh");
         assert_ne!(
-            find_node_binary().as_deref(),
+            find_node_binary(handle).as_deref(),
             Some(std::path::Path::new("/bin/sh")),
             "an override pointing at a shell was accepted"
         );
