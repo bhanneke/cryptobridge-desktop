@@ -65,23 +65,6 @@ function setting(q, key) {
   }
 }
 
-/* The built-in wallet, when the shell can host one. Absent in a browser: we
- * will not generate keys in a webview and keep them in localStorage, which is
- * exactly the design the built-in wallet replaces. There, the user still
- * supplies an address. */
-const builtinWallet = (() => {
-  const api = tauriApi();
-  if (!BuiltinWallet.isAvailable(api)) return null;
-  const q = new URLSearchParams(location.search);
-  try {
-    return new BuiltinWallet(api, setting(q, 'network') || 'mainnet');
-  } catch (err) {
-    console.error('built-in wallet unavailable:', err.message);
-    return null;
-  }
-})();
-if (builtinWallet) state.walletMode = 'builtin';
-
 function createAdapter() {
   const q = new URLSearchParams(location.search);
   if (setting(q, 'backend') === 'bisq') {
@@ -148,6 +131,27 @@ function createAdapter() {
 
 const adapter = createAdapter();
 let adapterReady = null;
+
+/* The built-in wallet, when the shell can host one. Absent in a browser: we
+ * will not generate keys in a webview and keep them in localStorage, which is
+ * exactly the design the built-in wallet replaces. There, the user still
+ * supplies an address.
+ *
+ * Built AFTER the adapter and from the adapter's own network, not from the
+ * settings, so a regtest session can never derive mainnet keys (or the other
+ * way round). Those are different coins on different chains; a mismatch means
+ * the seller is handed an address their node cannot pay. */
+const builtinWallet = (() => {
+  const api = tauriApi();
+  if (!BuiltinWallet.isAvailable(api)) return null;
+  try {
+    return new BuiltinWallet(api, adapter.getBackendInfo().network);
+  } catch (err) {
+    console.error('built-in wallet unavailable:', err.message);
+    return null;
+  }
+})();
+if (builtinWallet) state.walletMode = 'builtin';
 
 // ---------------------------------------------------------------
 // Formatting helpers (German locale for money, plain for BTC)
