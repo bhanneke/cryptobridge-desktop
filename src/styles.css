@@ -394,3 +394,31 @@ button:disabled { cursor: not-allowed; }
 }
 .wallet-toggle:hover { color: #0B1220; }
 .wallet-toggle:focus-visible { outline: 2px solid #6366F1; outline-offset: 2px; border-radius: 4px; }
+
+/* ---------- Connect screen ---------- */
+.connect-card { max-width: 480px; }
+.connect-body { display: flex; flex-direction: column; gap: 16px; padding-top: 4px; }
+.connect-result {
+  margin: 0; padding: 10px 14px; border-radius: 12px;
+  font-size: 13px; line-height: 1.45;
+}
+.connect-result[data-kind="ok"] {
+  background: rgba(16,185,129,.08); border: 1px solid rgba(16,185,129,.25); color: #0F6B4F;
+}
+.connect-result[data-kind="error"] {
+  background: rgba(220,38,38,.06); border: 1px solid rgba(220,38,38,.22); color: #9B1C1C;
+}
+.connect-result[data-kind="warn"] {
+  background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.28); color: #7A4E07;
+}
+.connect-or {
+  display: flex; align-items: center; gap: 12px;
+  font-size: 12px; color: #8A93A6;
+}
+.connect-or::before, .connect-or::after {
+  content: ""; flex: 1; height: 1px; background: #E6E8EE;
+}
+/* The pill became a button; keep it looking like a pill. */
+button.backend-pill { cursor: pointer; font: inherit; }
+button.backend-pill:hover { background: #F7F8FA; }
+button.backend-pill:focus-visible { outline: 2px solid #6366F1; outline-offset: 2px; }

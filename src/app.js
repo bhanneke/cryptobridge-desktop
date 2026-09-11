@@ -21,7 +21,8 @@ import { MockAdapter } from './adapters/mock-adapter.js';
 import { BisqAdapter } from './adapters/bisq-adapter.js';
 import { ExternalWallet, isValidBtcAddress } from './adapters/wallet.js';
 import { BuiltinWallet } from './adapters/builtin-wallet.js';
-import { tauriApi } from './adapters/transport.js';
+import { tauriApi, pickTransport } from './adapters/transport.js';
+import { normaliseNodeUrl, probeNode } from './adapters/node-probe.js';
 import { qrSvg } from './vendor/qr.js';
 
 // ---------------------------------------------------------------
@@ -129,7 +130,7 @@ function createAdapter() {
   return new MockAdapter({ latencyScale: reducedMotion() ? 0.2 : 1 });
 }
 
-const adapter = createAdapter();
+let adapter = createAdapter();
 let adapterReady = null;
 
 /* The built-in wallet, when the shell can host one. Absent in a browser: we
@@ -141,7 +142,7 @@ let adapterReady = null;
  * settings, so a regtest session can never derive mainnet keys (or the other
  * way round). Those are different coins on different chains; a mismatch means
  * the seller is handed an address their node cannot pay. */
-const builtinWallet = (() => {
+function makeBuiltinWallet() {
   const api = tauriApi();
   if (!BuiltinWallet.isAvailable(api)) return null;
   try {
@@ -150,8 +151,23 @@ const builtinWallet = (() => {
     console.error('built-in wallet unavailable:', err.message);
     return null;
   }
-})();
+}
+let builtinWallet = makeBuiltinWallet();
 if (builtinWallet) state.walletMode = 'builtin';
+
+/** Swap in a backend chosen on the connect screen, without a reload. The
+ *  wallet is rebuilt too, because it takes its chain from the adapter. */
+async function rebuildBackend() {
+  try { await adapter.close?.(); } catch { /* already gone */ }
+  adapter = createAdapter();
+  builtinWallet = makeBuiltinWallet();
+  state.walletMode = builtinWallet ? 'builtin' : 'external';
+  state.walletStatus = null;
+  state.offers = [];
+  state.selectedOffer = null;
+  bindBackendStatus();
+  setStep(1);
+}
 
 // ---------------------------------------------------------------
 // Formatting helpers (German locale for money, plain for BTC)
@@ -213,6 +229,117 @@ function bindBackendStatus() {
   });
   adapterReady = adapter.init();
   adapterReady.catch((err) => console.error('backend init failed', err));
+}
+
+// ---------------------------------------------------------------
+// Connect screen
+//
+// Until this existed the packaged app could not reach a real node at all:
+// the backend was read from the query string (a packaged app has none) or
+// from localStorage (which needs devtools, and release builds have none).
+// So the shipped artifact could only ever run the demo.
+// ---------------------------------------------------------------
+
+const SETTING_KEYS = { backend: 'cryptobridge.backend', node: 'cryptobridge.node',
+                       network: 'cryptobridge.network', pairing: 'cryptobridge.pairing' };
+
+function storeSetting(key, value) {
+  try {
+    if (value === null || value === undefined || value === '') localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch { /* storage denied: this session still works, the next forgets */ }
+}
+
+/** Has the user ever made a choice here? Absent means first run. */
+function hasBackendChoice() {
+  try { return !!localStorage.getItem(SETTING_KEYS.backend); } catch { return false; }
+}
+
+function connectResult(kind, message) {
+  const el = $('#connectResult');
+  el.hidden = !message;
+  el.textContent = message || '';
+  if (message) el.dataset.kind = kind;
+}
+
+function openConnect() {
+  const o = $('#connectOverlay');
+  try {
+    $('#connectUrl').value = localStorage.getItem(SETTING_KEYS.node) || 'http://127.0.0.1:8090/api/v1';
+    const net = localStorage.getItem(SETTING_KEYS.network);
+    if (net) $('#connectNetwork').value = net;
+  } catch { /* defaults are fine */ }
+  connectResult('', '');
+  o.classList.add('show');
+  o.setAttribute('aria-hidden', 'false');
+  $('#connectUrl').focus();
+}
+
+function closeConnect() {
+  const o = $('#connectOverlay');
+  o.classList.remove('show');
+  o.setAttribute('aria-hidden', 'true');
+}
+
+async function onConnect() {
+  const btn = $('#connectBtn');
+  const norm = normaliseNodeUrl($('#connectUrl').value);
+  if (norm.error) { connectResult('error', norm.error); return; }
+
+  const network = $('#connectNetwork').value;
+  const pairing = $('#connectPairing').value.trim();
+
+  btn.disabled = true;
+  connectResult('', 'Looking for a node…');
+  try {
+    // A read-only look first, purely so the message can be specific. This
+    // deliberately avoids adapter.init(), which creates a user identity on
+    // the node — a connection test must leave nothing behind.
+    const probe = await probeNode(pickTransport(), norm.url);
+
+    if (!probe.ok && probe.reason === 'needs-pairing' && !pairing) {
+      $('#connectPairingWrap').hidden = false;
+      connectResult('warn', probe.message);
+      $('#connectPairing').focus();
+      return;
+    }
+    if (!probe.ok && probe.reason !== 'needs-pairing') {
+      connectResult('error', probe.message);
+      return;
+    }
+    if (probe.ok && probe.networkHint && probe.networkHint !== network) {
+      // Advisory: a guess from the node's block explorer, not a fact.
+      connectResult('warn',
+        `This node looks like it is on ${probe.networkHint}, but you chose ${network}. ` +
+        `If that is wrong, the seller gets an address their node cannot pay.`);
+    }
+
+    // Save, then actually connect — that, not the probe, is the proof.
+    storeSetting(SETTING_KEYS.backend, 'bisq');
+    storeSetting(SETTING_KEYS.node, norm.url);
+    storeSetting(SETTING_KEYS.network, network);
+    if (pairing) storeSetting(SETTING_KEYS.pairing, pairing);
+
+    connectResult('', 'Connecting…');
+    await rebuildBackend();
+    await adapterReady;
+
+    const info = adapter.getBackendInfo();
+    connectResult('ok', `Connected to Bisq on ${info.network}${probe.version ? ` (node ${probe.version})` : ''}.`);
+    $('#connectPairing').value = '';
+    setTimeout(closeConnect, 900);
+  } catch (err) {
+    connectResult('error', err?.message || 'Could not connect to that node.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function onUseDemo() {
+  storeSetting(SETTING_KEYS.backend, 'mock');
+  storeSetting(SETTING_KEYS.pairing, null);
+  await rebuildBackend();
+  closeConnect();
 }
 
 // ---------------------------------------------------------------
@@ -531,6 +658,14 @@ function validateAmountStep() {
 function bindAmountStep() {
   $('#amountInput').addEventListener('input', validateAmountStep);
   $('#addrInput').addEventListener('input', validateAmountStep);
+  $('#backendPill').addEventListener('click', openConnect);
+  $('#connectBtn').addEventListener('click', onConnect);
+  $('#connectDemoBtn').addEventListener('click', onUseDemo);
+  $('#connectOverlay').addEventListener('click', (e) => {
+    // Click the backdrop to dismiss — but only once a backend is chosen, so
+    // first run cannot be skipped into a broken state.
+    if (e.target === $('#connectOverlay') && hasBackendChoice()) closeConnect();
+  });
   $('#walletCreateBtn').addEventListener('click', onCreateWallet);
   $('#walletConfirmBtn').addEventListener('click', onConfirmBackup);
   $('#walletToggle').addEventListener('click', onToggleWalletMode);
@@ -1009,4 +1144,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   bindTakeOffer();
   bindNewTrade();
   if (!(await applyDeepLink())) setStep(1);
+
+  /* First run in the packaged app: ask what to connect to, because there is no
+   * other way to say. Not in a browser -- there the query string still works,
+   * and an unskippable modal would be in the way of development and of the
+   * e2e suite. */
+  if (tauriApi() && !hasBackendChoice()) openConnect();
 });
