@@ -20,6 +20,7 @@
  *    the flag to drive an unattended trade to COMPLETE.
  */
 
+import { privacyVerdict } from './tor-status.js';
 import { OnrampAdapter, TradeState } from './onramp-adapter.js';
 import { epcPayload, parseSepaAccountData } from './epc.js';
 import { pickTransport } from './transport.js';
@@ -298,6 +299,23 @@ export class BisqAdapter extends OnrampAdapter {
 
   getBackendInfo() {
     return { backend: 'bisq', network: this.network, asset: 'BTC', rateEurPerBtc: this.rate };
+  }
+
+  /** How this node reaches trade peers -- over Tor, or over the open internet
+   *  where the counterparty can see the user's IP. The node reports it on the
+   *  profile we already have an identity for; nothing here changes the node.
+   *  Never throws: a privacy check that fails closed would block trading on
+   *  its own bug, so an unreadable answer becomes the "could not confirm"
+   *  verdict, which warns. */
+  async getPrivacyStatus() {
+    let profile = null;
+    try {
+      const res = await this._req('GET', '/user-identities/selected/user-profile');
+      profile = res?.data ?? null;
+    } catch (e) {
+      console.error('could not read the node transport:', e.message);
+    }
+    return privacyVerdict(profile, this.network);
   }
 
   _setStatus(status) {

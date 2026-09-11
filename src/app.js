@@ -324,10 +324,29 @@ async function onConnect() {
     await rebuildBackend();
     await adapterReady;
 
+    /* Connected -- now ask the node how it reaches trade peers. This is the
+     * only leg where Tor matters: our own hop to the node is loopback and
+     * never leaves the machine. A node on the open internet shows the user's
+     * IP address to the stranger they are about to send euros to. */
     const info = adapter.getBackendInfo();
-    connectResult('ok', `Connected to Bisq on ${info.network}${probe.version ? ` (node ${probe.version})` : ''}.`);
+    const privacy = await adapter.getPrivacyStatus();
+
+    if (privacy.level === 'block') {
+      // Do not keep the choice: otherwise the next launch silently reconnects
+      // into exactly the state we just refused.
+      storeSetting(SETTING_KEYS.backend, null);
+      connectResult('error', `${privacy.headline}. ${privacy.detail}`);
+      return;
+    }
+
+    const version = probe.version ? ` (node ${probe.version})` : '';
+    if (privacy.level === 'warn') {
+      connectResult('warn', `Connected to Bisq on ${info.network}${version}. ${privacy.headline}. ${privacy.detail}`);
+    } else {
+      connectResult('ok', `Connected to Bisq on ${info.network}${version}. ${privacy.headline}.`);
+      setTimeout(closeConnect, 1200);
+    }
     $('#connectPairing').value = '';
-    setTimeout(closeConnect, 900);
   } catch (err) {
     connectResult('error', err?.message || 'Could not connect to that node.');
   } finally {

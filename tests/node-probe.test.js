@@ -52,8 +52,29 @@ test('credentials in the URL are refused rather than silently forwarded', () => 
   assert.match(normaliseNodeUrl('http://user:pw@127.0.0.1:8090').error, /username and password/);
 });
 
-test('a non-default port and host survive normalisation', () => {
-  assert.equal(normaliseNodeUrl('localhost:9999').url, 'http://localhost:9999/api/v1');
+test('a non-default port survives normalisation', () => {
+  assert.equal(normaliseNodeUrl('127.0.0.1:9999').url, 'http://127.0.0.1:9999/api/v1');
+  assert.equal(normaliseNodeUrl('[::1]:8090').url, 'http://[::1]:8090/api/v1');
+});
+
+/* The Rust proxy accepts literal loopback IPs only and refuses hostnames,
+ * localhost included, so that it never resolves names. Client-side validation
+ * has to refuse exactly the same set, or the user is told "nothing answered"
+ * by a layer they cannot see. */
+test('hostnames are refused the way the proxy refuses them', () => {
+  assert.match(normaliseNodeUrl('localhost:8090').error, /Use 127\.0\.0\.1 instead of localhost/);
+  assert.match(normaliseNodeUrl('my-server.local:8090').error, /must be on this computer/);
+  assert.match(normaliseNodeUrl('192.168.1.10:8090').error, /must be on this computer/);
+  assert.match(normaliseNodeUrl('8.8.8.8:8090').error, /must be on this computer/);
+});
+
+test('the whole 127/8 block is loopback, and 127 lookalikes are not', () => {
+  assert.ok(normaliseNodeUrl('127.0.0.1:1').url);
+  assert.ok(normaliseNodeUrl('127.1.2.3:1').url);
+  assert.match(normaliseNodeUrl('128.0.0.1:1').error, /must be on this computer/);
+  // Refused by URL parsing before our check even runs -- either way it is
+  // refused, which is what matters.
+  assert.ok(normaliseNodeUrl('1270.0.0.1:1').error, '127-lookalike must not be accepted');
 });
 
 // ---- networkFromExplorer: advisory guess ---------------------------------

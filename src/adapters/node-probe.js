@@ -16,6 +16,17 @@
  *  against a real node; see bisq-adapter.js. */
 const AUTH_FAILURE = new Set([401, 403]);
 
+/** Literal loopback only: 127.0.0.0/8 or [::1]. Mirrors the Rust proxy. */
+export function isLoopbackLiteral(hostname) {
+  const h = String(hostname ?? '').replace(/^\[|\]$/g, '');
+  if (h === '::1' || h === '0:0:0:0:0:0:0:1') return true;
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (!m) return false;
+  const parts = m.slice(1).map(Number);
+  if (parts.some((n) => n > 255)) return false;
+  return parts[0] === 127;
+}
+
 /**
  * Make what the user typed into a URL we can call.
  * Accepts `127.0.0.1:8090`, `http://127.0.0.1:8090`, with or without `/api/v1`.
@@ -41,6 +52,18 @@ export function normaliseNodeUrl(raw) {
   }
   if (u.username || u.password) {
     return { error: 'Remove the username and password from the address.' };
+  }
+  /* The shell's proxy accepts literal loopback IPs only -- it refuses
+   * hostnames, `localhost` included, so that it never performs name
+   * resolution and DNS rebinding cannot walk it off the machine
+   * (src-tauri/src/proxy.rs). Reject the same things here, or the user gets a
+   * confusing failure from a layer they cannot see. */
+  if (!isLoopbackLiteral(u.hostname)) {
+    return {
+      error: u.hostname === 'localhost'
+        ? 'Use 127.0.0.1 instead of localhost — the app connects only to literal loopback addresses.'
+        : `The node must be on this computer. Use 127.0.0.1, not "${u.hostname}".`,
+    };
   }
 
   // Trailing slashes and a missing /api/v1 are the two things everyone gets
