@@ -353,7 +353,17 @@ export class BisqAdapter extends OnrampAdapter {
         premiumPct: priced.premiumPct,
         minEur, maxEur,
         paymentMethod,
-        reputation: o.offerOptions?.find((x) => x.type === 'ReputationOption')?.requiredTotalReputationScore ?? null,
+        // The maker's actual reputation, from the offer payload's own
+        // reputationScore. This used to read requiredTotalReputationScore out
+        // of the offer's ReputationOption, which Bisq deprecated in 2.1.1
+        // ("Not used anymore since 2.1.1" in offer.proto) and no longer
+        // populates -- so the number the offer book showed was decorative.
+        // That matters more than it sounds: with mediation out of v1, this is
+        // the only thing standing between the user and a seller who keeps
+        // their euros.
+        reputation: wrapper.reputationScore?.totalScore ?? null,
+        /** 0-5, as Bisq's own UI presents it. */
+        reputationStars: wrapper.reputationScore?.fiveSystemScore ?? null,
       };
       this.offerCache.set(o.id, offer);
       out.push(offer);

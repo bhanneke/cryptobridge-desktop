@@ -419,7 +419,16 @@ function offerCardEl(offer) {
   $('.offer-premium', btn).textContent = fmtPremium(offer.premiumPct);
 
   const rep = $('.offer-rep', btn);
-  if (offer.reputation != null) rep.textContent = `reputation ${offer.reputation}`;
+  if (offer.reputation != null) {
+    // Stars when we have them: "reputation 0" reads as a formatting glitch,
+    // where "no reputation yet" is the actual, and important, fact.
+    const stars = offer.reputationStars;
+    rep.textContent = offer.reputation === 0
+      ? 'no reputation yet'
+      : (typeof stars === 'number' && stars > 0
+          ? `reputation ${offer.reputation} · ${stars.toFixed(1)}/5`
+          : `reputation ${offer.reputation}`);
+  }
   else rep.remove();
 
   return btn;

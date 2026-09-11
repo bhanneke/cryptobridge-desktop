@@ -38,7 +38,8 @@ export const TradeState = Object.freeze({
  * @property {number} minEur         Minimum fiat amount the maker accepts
  * @property {number} maxEur         Maximum fiat amount the maker accepts
  * @property {string} paymentMethod  'SEPA' | 'SEPA_INSTANT'
- * @property {number} reputation     Maker reputation score (backend-specific scale)
+ * @property {number} reputation      Maker reputation score (backend-specific scale)
+ * @property {number} [reputationStars] Same score as 0-5, when the backend gives one
  *
  * @typedef {Object} Trade
  * @property {string} id
