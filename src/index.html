@@ -176,22 +176,61 @@
           </div>
 
           <div class="flex flex-col gap-2">
-            <label for="addrInput" class="text-[13px] font-medium text-ink2">Your bitcoin receive address</label>
-            <input id="addrInput" type="text" spellcheck="false" autocomplete="off" autocapitalize="none"
-              placeholder="bc1…"
-              class="w-full h-14 px-4 bg-surface border border-line rounded-xl2 text-[14px] font-mono placeholder:text-muted focus:outline-none focus:border-indigo focus:shadow-ring transition" />
-            <p id="addrHint" class="text-[13px] text-muted">
-              The seller sends the bitcoin straight here. Paste an address from a wallet you control.
-            </p>
-            <p id="addrError" class="hidden text-[13px] err-text"></p>
+            <span class="text-[13px] font-medium text-ink2">Where your bitcoin goes</span>
+
+            <!-- No wallet yet: offer to make one. -->
+            <div id="walletNone" class="wallet-card" hidden>
+              <p><strong>You don't have a bitcoin wallet yet.</strong> CryptoBridge can create one on
+                 this computer. The keys are generated here and stay here — we never see them, and we
+                 cannot move your bitcoin even if we wanted to.</p>
+              <button id="walletCreateBtn" type="button" class="btn-secondary">
+                <span class="material-symbols-outlined text-[18px]" aria-hidden="true">add</span>
+                Create my wallet
+              </button>
+              <p id="walletCreateError" class="hidden text-[13px] err-text"></p>
+            </div>
+
+            <!-- Made, but not written down yet. -->
+            <div id="walletBackupWrap" class="wallet-card wallet-card--warn" hidden>
+              <p><strong>Write these twelve words down, on paper, in this order.</strong> They are the
+                 only way to get your bitcoin back if this computer is lost, stolen or breaks. Anyone
+                 who has them can spend your money, so keep them off screens and out of photos.</p>
+              <ol id="walletWords" class="wallet-words"></ol>
+              <label for="walletConfirmInput" class="text-[13px] font-medium">Now type them back, to prove the copy is good</label>
+              <textarea id="walletConfirmInput" class="wallet-confirm" rows="2" spellcheck="false"
+                autocomplete="off" autocapitalize="none" placeholder="word word word …"></textarea>
+              <p id="walletBackupError" class="hidden text-[13px] err-text"></p>
+              <button id="walletConfirmBtn" type="button" class="btn-secondary">I've written them down</button>
+            </div>
+
+            <!-- Ready. -->
+            <div id="walletReady" class="wallet-card wallet-card--ready" hidden>
+              <span class="material-symbols-outlined text-[18px]" aria-hidden="true">account_balance_wallet</span>
+              <p><strong>Your CryptoBridge wallet is ready.</strong> Each trade uses a brand-new
+                 address, so your purchases cannot be tied together by anyone watching the chain.</p>
+            </div>
+
+            <!-- Bring your own address. -->
+            <div id="walletExternalWrap" class="flex flex-col gap-2" hidden>
+              <label for="addrInput" class="text-[13px] font-medium text-ink2">Your bitcoin receive address</label>
+              <input id="addrInput" type="text" spellcheck="false" autocomplete="off" autocapitalize="none"
+                placeholder="bc1…"
+                class="w-full h-14 px-4 bg-surface border border-line rounded-xl2 text-[14px] font-mono placeholder:text-muted focus:outline-none focus:border-indigo focus:shadow-ring transition" />
+              <p id="addrHint" class="text-[13px] text-muted">
+                The seller sends the bitcoin straight here. Paste an address from a wallet you control.
+              </p>
+              <p id="addrError" class="hidden text-[13px] err-text"></p>
+            </div>
+
+            <button id="walletToggle" type="button" class="wallet-toggle" hidden></button>
           </div>
 
           <div class="custody-note">
             <span class="material-symbols-outlined text-[18px]">key_off</span>
             <p>
-              <strong>We never hold your keys.</strong> CryptoBridge has no wallet of its own — it cannot
-              receive, hold or move your bitcoin. Check the address carefully: a payment to the wrong
-              address cannot be reversed by us or by anyone.
+              <strong>We never hold your keys.</strong> Whether you use the built-in wallet or your own
+              address, the keys exist only on this computer — CryptoBridge cannot receive, hold or move
+              your bitcoin. A payment to the wrong address cannot be reversed by us or by anyone.
             </p>
           </div>
         </div>

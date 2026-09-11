@@ -20,6 +20,8 @@ import { TradeState } from './adapters/onramp-adapter.js';
 import { MockAdapter } from './adapters/mock-adapter.js';
 import { BisqAdapter } from './adapters/bisq-adapter.js';
 import { ExternalWallet, isValidBtcAddress } from './adapters/wallet.js';
+import { BuiltinWallet } from './adapters/builtin-wallet.js';
+import { tauriApi } from './adapters/transport.js';
 import { qrSvg } from './vendor/qr.js';
 
 // ---------------------------------------------------------------
@@ -31,7 +33,9 @@ const state = {
   offers: [],            // last offer book fetched from the adapter
   selectedOffer: null,   // the offer the user picked (step 2)
   amountEur: 0,          // what they will send by SEPA (step 3)
-  receiveAddress: '',    // their own BTC address, checksum-validated (step 3)
+  receiveAddress: '',    // the address the coins go to — from the built-in wallet, or typed
+  walletMode: 'external',// 'builtin' once we know the shell can host a wallet
+  walletStatus: null,    // {exists, backedUp} for the built-in wallet, null until checked
   trade: null,           // the live trade, once taken (step 4)
 };
 
@@ -61,6 +65,23 @@ function setting(q, key) {
   }
 }
 
+/* The built-in wallet, when the shell can host one. Absent in a browser: we
+ * will not generate keys in a webview and keep them in localStorage, which is
+ * exactly the design the built-in wallet replaces. There, the user still
+ * supplies an address. */
+const builtinWallet = (() => {
+  const api = tauriApi();
+  if (!BuiltinWallet.isAvailable(api)) return null;
+  const q = new URLSearchParams(location.search);
+  try {
+    return new BuiltinWallet(api, setting(q, 'network') || 'mainnet');
+  } catch (err) {
+    console.error('built-in wallet unavailable:', err.message);
+    return null;
+  }
+})();
+if (builtinWallet) state.walletMode = 'builtin';
+
 function createAdapter() {
   const q = new URLSearchParams(location.search);
   if (setting(q, 'backend') === 'bisq') {
@@ -68,10 +89,27 @@ function createAdapter() {
       const network = setting(q, 'network') || 'mainnet';
       // The wallet asks the UI for the address at the moment it needs one, so
       // what the user typed in step 3 is what the seller is told to pay.
-      const wallet = new ExternalWallet({
+      const typedWallet = new ExternalWallet({
         addressProvider: () => state.receiveAddress,
         network,
       });
+      /* One wallet object, two sources. Which one answers is decided when the
+       * address is actually needed, so switching modes mid-session is safe and
+       * BisqAdapter never learns there was a choice. */
+      const wallet = {
+        getReceiveAddress: async () => {
+          const from = state.walletMode === 'builtin' && builtinWallet ? builtinWallet : typedWallet;
+          const address = await from.getReceiveAddress();
+          // Remember it so the review and completion screens can show where
+          // the coins went, whichever wallet produced it.
+          state.receiveAddress = address;
+          return address;
+        },
+        getBalance: () =>
+          (state.walletMode === 'builtin' && builtinWallet ? builtinWallet : typedWallet).getBalance(),
+        withdraw: (addr, sats) =>
+          (state.walletMode === 'builtin' && builtinWallet ? builtinWallet : typedWallet).withdraw(addr, sats),
+      };
       // Authenticated nodes (authorizationRequired=true): paste the pairing QR
       // payload once as `cryptobridge.pairing`. It is spent immediately and
       // replaced by the credentials the node issues.
@@ -312,7 +350,111 @@ function initAmountStep() {
   ]);
   $('#amountHint').textContent =
     `This seller accepts between ${fmtEUR(offer.minEur)} and ${fmtEUR(offer.maxEur)}.`;
+  refreshWallet();
   validateAmountStep();
+}
+
+// ---------------------------------------------------------------
+// Step 3 — the built-in wallet
+//
+// Four states, one at a time: no wallet / written down? / ready / bring your
+// own. The user never sees more than one, because every extra choice on this
+// screen is a chance to get bitcoin wrong.
+// ---------------------------------------------------------------
+
+/** Ask the shell what it has and repaint. Safe to call repeatedly. */
+async function refreshWallet() {
+  if (state.walletMode !== 'builtin' || !builtinWallet) { renderWallet(); return; }
+  try {
+    state.walletStatus = await builtinWallet.status();
+  } catch (err) {
+    // A wallet we cannot ask about is one we must not rely on. Fall back to a
+    // typed address rather than block the user entirely.
+    console.error('wallet status failed:', err.message);
+    state.walletMode = 'external';
+    state.walletStatus = null;
+  }
+  renderWallet();
+  validateAmountStep();
+}
+
+function renderWallet() {
+  const builtin = state.walletMode === 'builtin' && !!builtinWallet;
+  const st = state.walletStatus;
+
+  $('#walletNone').hidden        = !(builtin && st && !st.exists);
+  $('#walletBackupWrap').hidden  = !(builtin && st && st.exists && !st.backedUp);
+  $('#walletReady').hidden       = !(builtin && st && st.exists && st.backedUp);
+  $('#walletExternalWrap').hidden = builtin;
+
+  // The escape hatch only appears when there is something to switch to.
+  const toggle = $('#walletToggle');
+  toggle.hidden = !builtinWallet;
+  toggle.textContent = builtin
+    ? 'I already have a wallet — let me paste an address'
+    : 'Use the wallet CryptoBridge made for me';
+}
+
+async function onCreateWallet() {
+  const btn = $('#walletCreateBtn');
+  const err = $('#walletCreateError');
+  btn.disabled = true;
+  err.classList.add('hidden');
+  try {
+    state.walletStatus = await builtinWallet.create();
+    renderWallet();
+    await showRecoveryPhrase();
+  } catch (e) {
+    err.textContent = e?.message || 'Could not create a wallet.';
+    err.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    validateAmountStep();
+  }
+}
+
+/** Paint the twelve words. Held in a local only — never on state, never in
+ *  storage, and gone as soon as this function returns. */
+async function showRecoveryPhrase() {
+  const list = $('#walletWords');
+  list.replaceChildren();
+  try {
+    const words = await builtinWallet.revealRecoveryPhrase();
+    for (const w of words) {
+      const li = document.createElement('li');
+      li.textContent = w;
+      list.appendChild(li);
+    }
+  } catch (e) {
+    const li = document.createElement('li');
+    li.textContent = e?.message || 'could not read the phrase';
+    list.appendChild(li);
+  }
+}
+
+async function onConfirmBackup() {
+  const btn = $('#walletConfirmBtn');
+  const err = $('#walletBackupError');
+  const words = $('#walletConfirmInput').value.trim().split(/\s+/).filter(Boolean);
+  btn.disabled = true;
+  err.classList.add('hidden');
+  try {
+    await builtinWallet.confirmBackup(words);
+    $('#walletConfirmInput').value = '';
+    $('#walletWords').replaceChildren();   // the phrase leaves the screen for good
+    await refreshWallet();
+  } catch (e) {
+    err.textContent = e?.message || 'That did not match.';
+    err.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function onToggleWalletMode() {
+  state.walletMode = state.walletMode === 'builtin' ? 'external' : 'builtin';
+  if (state.walletMode === 'builtin') refreshWallet();
+  else { renderWallet(); validateAmountStep(); }
 }
 
 function amountProblem() {
@@ -323,6 +465,17 @@ function amountProblem() {
   if (!Number.isFinite(v) || v <= 0) return { msg: 'Enter an amount like 250 or 250,00.' };
   if (v < offer.minEur) return { msg: `This seller's minimum is ${fmtEUR(offer.minEur)}.` };
   if (v > offer.maxEur) return { msg: `This seller's maximum is ${fmtEUR(offer.maxEur)}.` };
+  return null;
+}
+
+/** In built-in mode the gate is "is there a wallet, and is it backed up",
+ *  not "is this string a valid address". */
+function walletProblem() {
+  if (state.walletMode !== 'builtin') return addressProblem();
+  const st = state.walletStatus;
+  if (!st) return { silent: true, msg: 'Checking your wallet…' };
+  if (!st.exists) return { silent: true, msg: 'Create a wallet to continue.' };
+  if (!st.backedUp) return { silent: true, msg: 'Write down your recovery phrase to continue.' };
   return null;
 }
 
@@ -348,12 +501,13 @@ function validateAmountStep() {
   amountErr.classList.toggle('hidden', !(aProb && !aProb.silent));
   $('#amountInput').classList.toggle('field-invalid', !!(aProb && !aProb.silent));
 
-  const dProb = addressProblem();
+  const dProb = walletProblem();
   const addrErr = $('#addrError');
-  addrErr.textContent = dProb && !dProb.silent ? dProb.msg : '';
-  addrErr.classList.toggle('hidden', !(dProb && !dProb.silent));
-  $('#addrInput').classList.toggle('field-invalid', !!(dProb && !dProb.silent));
-  $('#addrInput').classList.toggle('field-valid', !dProb);
+  const showAddrErr = state.walletMode === 'external' && dProb && !dProb.silent;
+  addrErr.textContent = showAddrErr ? dProb.msg : '';
+  addrErr.classList.toggle('hidden', !showAddrErr);
+  $('#addrInput').classList.toggle('field-invalid', !!showAddrErr);
+  $('#addrInput').classList.toggle('field-valid', state.walletMode === 'external' && !dProb);
 
   const ok = !aProb && !dProb;
   if (ok) {
@@ -373,6 +527,9 @@ function validateAmountStep() {
 function bindAmountStep() {
   $('#amountInput').addEventListener('input', validateAmountStep);
   $('#addrInput').addEventListener('input', validateAmountStep);
+  $('#walletCreateBtn').addEventListener('click', onCreateWallet);
+  $('#walletConfirmBtn').addEventListener('click', onConfirmBackup);
+  $('#walletToggle').addEventListener('click', onToggleWalletMode);
 }
 
 // ---------------------------------------------------------------

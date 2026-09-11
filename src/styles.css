@@ -339,3 +339,58 @@ button:disabled { cursor: not-allowed; }
   color: #0B1220; white-space: pre-wrap; word-break: break-word;
 }
 .pay-raw p { font-size: 11px; color: #9AA3B2; line-height: 1.5; }
+
+/* ---------- Built-in wallet (step 3) ---------- */
+.wallet-card {
+  display: flex; flex-direction: column; gap: 12px; align-items: flex-start;
+  background: #F7F8FA; border: 1px solid #E6E8EE; border-radius: 14px;
+  padding: 16px; font-size: 13px; line-height: 1.5; color: #5B6478;
+}
+.wallet-card p { margin: 0; }
+.wallet-card strong { color: #0B1220; }
+.wallet-card--ready {
+  flex-direction: row; align-items: flex-start; gap: 12px;
+  background: rgba(16,185,129,.06); border-color: rgba(16,185,129,.22);
+}
+.wallet-card--ready .material-symbols-outlined { color: #10B981; flex: none; margin-top: 1px; }
+.wallet-card--warn {
+  background: rgba(245,158,11,.07); border-color: rgba(245,158,11,.28); color: #7A4E07;
+}
+.wallet-card--warn strong { color: #6B3E05; }
+
+/* The recovery phrase. Deliberately plain and copy-unfriendly: writing the
+   words down by hand is the point, and a one-click copy invites pasting them
+   into a notes app, which is where phrases get stolen. */
+.wallet-words {
+  list-style: none; margin: 0; padding: 14px; width: 100%;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 12px;
+  background: #fff; border: 1px solid #E6E8EE; border-radius: 12px;
+  counter-reset: word;
+  user-select: text;
+}
+@media (max-width: 520px) { .wallet-words { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.wallet-words li {
+  counter-increment: word;
+  display: flex; align-items: baseline; gap: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px; color: #0B1220;
+}
+.wallet-words li::before {
+  content: counter(word);
+  font-family: inherit; font-size: 11px; color: #8A93A6;
+  min-width: 15px; text-align: right; flex: none;
+}
+.wallet-confirm {
+  width: 100%; min-height: 64px; padding: 10px 12px; resize: vertical;
+  background: #fff; border: 1px solid #E6E8EE; border-radius: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
+  color: #0B1220; line-height: 1.5;
+}
+.wallet-confirm:focus { outline: none; border-color: #6366F1; box-shadow: 0 0 0 4px rgba(99,102,241,.12); }
+.wallet-toggle {
+  align-self: flex-start; margin-top: 2px; padding: 2px 0;
+  background: none; border: none; cursor: pointer;
+  font-size: 12px; color: #5B6478; text-decoration: underline; text-underline-offset: 2px;
+}
+.wallet-toggle:hover { color: #0B1220; }
+.wallet-toggle:focus-visible { outline: 2px solid #6366F1; outline-offset: 2px; border-radius: 4px; }
