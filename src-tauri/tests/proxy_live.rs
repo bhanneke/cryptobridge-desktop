@@ -66,7 +66,7 @@ async fn carries_a_real_http_request_and_response() {
     );
     let (port, server) = serve_once(response).await;
 
-    let client = proxy::build_client();
+    let client = proxy::Clients::new();
     let res = proxy::http_request(
         &client,
         "POST",
@@ -94,7 +94,7 @@ async fn hands_back_error_statuses_instead_of_throwing() {
         serve_once("HTTP/1.1 404 Not Found\r\ncontent-length: 9\r\nconnection: close\r\n\r\nno trade!")
             .await;
 
-    let client = proxy::build_client();
+    let client = proxy::Clients::new();
     let res = proxy::http_request(
         &client,
         "GET",
@@ -116,7 +116,7 @@ async fn does_not_follow_redirects_off_loopback() {
     )
     .await;
 
-    let client = proxy::build_client();
+    let client = proxy::Clients::new();
     let res = proxy::http_request(
         &client,
         "GET",
@@ -131,7 +131,7 @@ async fn does_not_follow_redirects_off_loopback() {
 
 #[tokio::test]
 async fn guards_fire_on_the_real_call_path() {
-    let client = proxy::build_client();
+    let client = proxy::Clients::new();
 
     // A hostname that genuinely resolves to loopback is still refused, and the
     // error has to tell the user what to type instead.
@@ -203,7 +203,7 @@ async fn live_bisq_node_speaks_through_the_proxy() {
     };
     let base = base.trim_end_matches('/').to_string();
 
-    let client = proxy::build_client();
+    let client = proxy::Clients::new();
     let res = proxy::http_request(&client, "GET", &format!("{base}/market-price/quotes"), None, None)
         .await
         .expect("the node should answer through the proxy");
@@ -262,7 +262,7 @@ async fn live_auth_pairing_and_authenticated_websocket() {
         return;
     };
     let base = base.trim_end_matches('/').to_string();
-    let client = proxy::build_client();
+    let client = proxy::Clients::new();
 
     // 1. With no credentials the node refuses. Note the code: the request is
     //    let through unauthenticated and then denied by the *authorization*

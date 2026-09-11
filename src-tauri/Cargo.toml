@@ -11,6 +11,11 @@ edition = "2021"
 name = "cryptobridge_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[dev-dependencies]
+# Tauri's mock runtime, so the IPC contract between the webview and these
+# commands can be tested without a window.
+tauri = { version = "2", features = ["test"] }
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -18,8 +23,20 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.13.4", default-features = false, features = ["stream"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["stream", "socks"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "handshake"] }
+# SOCKS5 for the WebSocket leg to an onion service. Pulls in no TLS stack;
+# the no-TLS CI assertion must stay green.
+tokio-socks = "0.5"
 url = "2.5.8"
 futures-util = { version = "0.3.33", default-features = false, features = ["std", "sink"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+
+# Built-in wallet. bdk_wallet is the descriptor wallet itself; keyring keeps the
+# recovery phrase in the OS keychain so we never implement encryption ourselves.
+# Neither pulls in a TLS stack -- the no-TLS CI check must stay green.
+bdk_wallet = { version = "3.1", features = ["keys-bip39", "rusqlite"] }
+keyring = "4"
+# Compact block filters (BIP157/158) so the wallet learns its balance without
+# any server being told which addresses are ours, routed through Tor's SOCKS5.
+bdk_kyoto = "0.17"

@@ -40,6 +40,9 @@ pub const MAX_RESPONSE_BODY: usize = 8 * 1024 * 1024;
 pub const MAX_WS_FRAME: usize = 1024 * 1024;
 pub const MAX_SOCKETS: usize = 4;
 pub const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+/// Tor adds three hops and a rendezvous; the loopback timeout would fail a
+/// perfectly healthy circuit.
+pub const TOR_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Bisq 2's REST prefix. Everything the adapter calls lives under it.
 pub const API_PREFIX: &str = "/api/v1/";
@@ -127,7 +130,51 @@ pub fn check_method(method: &str) -> Result<String, String> {
 }
 
 /// The single gate every proxied URL passes through.
-pub fn check_url(raw: &str, kind: Kind) -> Result<Url, String> {
+/// Where a checked URL points. Two classes, and no third is representable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Destination {
+    /// A literal loopback IP. Reached directly; never leaves the machine.
+    Loopback,
+    /// A v3 onion service. Reached only through the local Tor SOCKS5 port.
+    Onion,
+}
+
+/// Where Tor listens for SOCKS5. The Tor Browser bundle uses 9150; a system
+/// tor daemon uses 9050. We target the daemon.
+pub const TOR_SOCKS: &str = "127.0.0.1:9050";
+
+/// v3 onion addresses are exactly 56 base32 characters (a-z, 2-7) plus
+/// ".onion". Nothing else is accepted -- in particular v2 addresses (16
+/// characters) are refused: they were deprecated and their cryptography is
+/// not worth carrying.
+///
+/// Why an onion destination does not weaken this proxy: a v3 address *is* the
+/// service's public key, so the connection is end-to-end encrypted and
+/// authenticated by the address itself. Plaintext HTTP over it is not a
+/// downgrade, which is why Bisq offers its API that way with no TLS. And
+/// `.onion` is not resolvable through DNS, so the property that mattered in
+/// the audit -- this proxy never performs a name lookup that could be pointed
+/// off-machine -- survives intact. Tor resolves it internally, over a
+/// connection to loopback.
+fn check_onion_host(name: &str) -> Result<(), String> {
+    let label = name
+        .strip_suffix(".onion")
+        .ok_or_else(|| format!("host {name:?} is not an onion address"))?;
+    if label.len() != 56 {
+        return Err(format!(
+            "onion address {name:?} is not a v3 address (expected 56 characters before \".onion\", got {})",
+            label.len()
+        ));
+    }
+    if !label.bytes().all(|b| b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b)) {
+        return Err(format!(
+            "onion address {name:?} contains characters outside base32 (a-z, 2-7)"
+        ));
+    }
+    Ok(())
+}
+
+pub fn check_url(raw: &str, kind: Kind) -> Result<(Url, Destination), String> {
     let url = Url::parse(raw).map_err(|e| format!("unparseable URL {raw:?}: {e}"))?;
 
     if url.scheme() != kind.scheme() {
@@ -146,20 +193,37 @@ pub fn check_url(raw: &str, kind: Kind) -> Result<Url, String> {
     }
 
     let host = url.host().ok_or("URL has no host")?;
-    let ip: IpAddr = match host {
-        Host::Ipv4(v4) => IpAddr::V4(v4),
-        Host::Ipv6(v6) => IpAddr::V6(v6),
+    let destination = match host {
+        Host::Ipv4(v4) => {
+            let ip = IpAddr::V4(v4);
+            if !is_loopback_ip(ip) {
+                return Err(format!(
+                    "host {ip} is not loopback — this proxy only reaches 127.0.0.0/8 and ::1"
+                ));
+            }
+            Destination::Loopback
+        }
+        Host::Ipv6(v6) => {
+            let ip = IpAddr::V6(v6);
+            if !is_loopback_ip(ip) {
+                return Err(format!(
+                    "host {ip} is not loopback — this proxy only reaches 127.0.0.0/8 and ::1"
+                ));
+            }
+            Destination::Loopback
+        }
+        // The only name ever accepted, and only in this exact shape. Ordinary
+        // hostnames (including "localhost") stay refused, so this proxy still
+        // never performs a DNS lookup.
         Host::Domain(name) => {
-            return Err(format!(
-                "host {name:?} is not a literal loopback IP — use 127.0.0.1. Hostnames (including \"localhost\") are refused so that this proxy never resolves a name and DNS can never point it off-machine"
-            ));
+            check_onion_host(name).map_err(|e| {
+                format!(
+                    "{e}. This proxy reaches a literal loopback IP (use 127.0.0.1) or a v3 onion service, and nothing else"
+                )
+            })?;
+            Destination::Onion
         }
     };
-    if !is_loopback_ip(ip) {
-        return Err(format!(
-            "host {ip} is not loopback — this proxy only reaches 127.0.0.0/8 and ::1"
-        ));
-    }
 
     // `Url::parse` already resolves `..` segments, so a traversal shows up as a
     // path that simply fails the prefix test. Percent-encoded dots survive
@@ -185,13 +249,64 @@ pub fn check_url(raw: &str, kind: Kind) -> Result<Url, String> {
         ));
     }
 
-    Ok(url)
+    Ok((url, destination))
 }
 
 /// The HTTP client the commands share.
 ///
 /// `no_proxy` matters: without it `HTTP_PROXY` in the environment could route
 /// what we believe is loopback traffic through someone else's server.
+/// The two clients, one per destination class. Kept apart deliberately: the
+/// loopback client has `no_proxy()` so no environment variable can capture
+/// traffic we believe stays on the machine, and the onion client has exactly
+/// one proxy, Tor, and can reach nothing else.
+pub struct Clients {
+    loopback: reqwest::Client,
+    /// `None` when the SOCKS proxy could not be configured; onion requests
+    /// then fail with an explanation instead of silently falling back to a
+    /// direct connection, which would leak the request onto the clearnet.
+    onion: Option<reqwest::Client>,
+}
+
+impl Clients {
+    pub fn new() -> Self {
+        Self {
+            loopback: build_client(),
+            onion: build_onion_client(),
+        }
+    }
+
+    pub fn for_destination(&self, dest: Destination) -> Result<&reqwest::Client, String> {
+        match dest {
+            Destination::Loopback => Ok(&self.loopback),
+            Destination::Onion => self.onion.as_ref().ok_or_else(|| {
+                format!("cannot reach an onion service: no Tor SOCKS proxy at {TOR_SOCKS}")
+            }),
+        }
+    }
+}
+
+impl Default for Clients {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A client that can *only* speak through Tor.
+///
+/// `socks5h` rather than `socks5`: the `h` makes Tor resolve the destination.
+/// With plain `socks5` reqwest would try to resolve `.onion` locally, which
+/// fails — and in the general case would be the exact DNS leak this avoids.
+fn build_onion_client() -> Option<reqwest::Client> {
+    let proxy = reqwest::Proxy::all(format!("socks5h://{TOR_SOCKS}")).ok()?;
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(TOR_TIMEOUT)
+        .proxy(proxy)
+        .build()
+        .ok()
+}
+
 pub fn build_client() -> reqwest::Client {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -210,14 +325,15 @@ pub struct HttpResponse {
 }
 
 pub async fn http_request(
-    client: &reqwest::Client,
+    clients: &Clients,
     method: &str,
     raw_url: &str,
     body: Option<String>,
     headers: Option<&std::collections::HashMap<String, String>>,
 ) -> Result<HttpResponse, String> {
     let method = check_method(method)?;
-    let url = check_url(raw_url, Kind::Http)?;
+    let (url, dest) = check_url(raw_url, Kind::Http)?;
+    let client = clients.for_destination(dest)?;
     let extra = check_headers(headers)?;
 
     if let Some(b) = &body {
@@ -264,12 +380,18 @@ pub async fn http_request(
     })
 }
 
-/// The one WebSocket type this app ever holds. `MaybeTlsStream` is
-/// tokio-tungstenite's return type; with no TLS features enabled its only
-/// inhabitable variant is the plaintext one.
-pub type BisqWs = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+/// Anything we can run a WebSocket over: a direct loopback TCP stream, or a
+/// SOCKS5 stream through Tor. Boxed so both destinations produce one type.
+pub trait WsIo: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> WsIo for T {}
+
+/// The one WebSocket type this app ever holds.
+///
+/// We now open the TCP connection ourselves rather than letting
+/// tokio-tungstenite do it, which also removes its name resolution from the
+/// picture: by this point the destination has already been checked, and the
+/// socket goes exactly where the check said it would.
+pub type BisqWs = tokio_tungstenite::WebSocketStream<Box<dyn WsIo>>;
 
 /// Check, then connect. Kept next to the checks so no caller can skip them.
 ///
@@ -284,7 +406,7 @@ pub async fn ws_connect(
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue};
 
-    let target = check_url(raw_url, Kind::Ws)?;
+    let (target, dest) = check_url(raw_url, Kind::Ws)?;
     let extra = check_headers(headers)?;
 
     let mut request = target
@@ -306,9 +428,40 @@ pub async fn ws_connect(
     cfg.max_message_size = Some(MAX_WS_FRAME);
     cfg.max_frame_size = Some(MAX_WS_FRAME);
 
-    let (stream, _resp) = tokio_tungstenite::connect_async_with_config(request, Some(cfg), false)
+    // Open the socket ourselves so it goes exactly where the check said. The
+    // onion branch must never fall back to a direct connection: that would
+    // put a request we promised to send over Tor onto the clearnet.
+    let host = target.host_str().ok_or("WebSocket URL has no host")?.to_string();
+    let port = target.port_or_known_default().ok_or("WebSocket URL has no port")?;
+
+    let io: Box<dyn WsIo> = match dest {
+        Destination::Loopback => {
+            let tcp = tokio::time::timeout(
+                HTTP_TIMEOUT,
+                tokio::net::TcpStream::connect((host.as_str(), port)),
+            )
+            .await
+            .map_err(|_| format!("Bisq WebSocket timed out connecting to {target}"))?
+            .map_err(|e| format!("Bisq WebSocket unreachable at {target}: {e}"))?;
+            Box::new(tcp)
+        }
+        Destination::Onion => {
+            let socks = tokio::time::timeout(
+                TOR_TIMEOUT,
+                tokio_socks::tcp::Socks5Stream::connect(TOR_SOCKS, (host.as_str(), port)),
+            )
+            .await
+            .map_err(|_| format!("timed out building a Tor circuit to {target}"))?
+            .map_err(|e| {
+                format!("could not reach {target} through Tor at {TOR_SOCKS}: {e}. Is tor running?")
+            })?;
+            Box::new(socks)
+        }
+    };
+
+    let (stream, _resp) = tokio_tungstenite::client_async_with_config(request, io, Some(cfg))
         .await
-        .map_err(|e| format!("Bisq WebSocket unreachable at {target}: {e}"))?;
+        .map_err(|e| format!("Bisq WebSocket handshake failed at {target}: {e}"))?;
     Ok(stream)
 }
 
@@ -403,7 +556,79 @@ mod tests {
             Kind::Http,
         )
         .unwrap();
-        assert_eq!(u.query(), Some("x=1"));
+        assert_eq!(u.0.query(), Some("x=1"));
+        assert_eq!(u.1, Destination::Loopback);
+    }
+
+    // ---- onion destination ------------------------------------------------
+
+    /// A real v3 address shape: 56 base32 characters.
+    const ONION: &str = "abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx";
+
+    #[test]
+    fn v3_onion_addresses_are_accepted_and_marked_as_such() {
+        let (_, dest) = check_url(&format!("http://{ONION}.onion:8090/api/v1/trades"), Kind::Http).unwrap();
+        assert_eq!(dest, Destination::Onion);
+        let (_, dest) = check_url(&format!("ws://{ONION}.onion:8090/websocket"), Kind::Ws).unwrap();
+        assert_eq!(dest, Destination::Onion);
+    }
+
+    /// The whole point of allowing one name shape is that it is *one* shape.
+    /// If ordinary hostnames slipped through here, the proxy would be
+    /// performing DNS again and could be pointed anywhere.
+    #[test]
+    fn allowing_onion_did_not_reopen_hostnames() {
+        for host in [
+            "localhost",
+            "evil.example",
+            "bisq.local",
+            "notanonion.onion.evil.example",
+            "example.com.onion.co",
+        ] {
+            let u = format!("http://{host}:8090/api/v1/trades");
+            assert!(check_url(&u, Kind::Http).is_err(), "hostname accepted: {host}");
+        }
+    }
+
+    #[test]
+    fn v2_onion_addresses_are_refused() {
+        // 16 characters: the deprecated v2 format.
+        let err = check_url("http://abcdefghijklmnop.onion:8090/api/v1/trades", Kind::Http).unwrap_err();
+        assert!(err.contains("v3"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn onion_labels_outside_base32_are_refused() {
+        // 56 characters, but '1', '8', '9' and '0' are not in base32.
+        let bad = "abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuv10";
+        assert_eq!(bad.len(), 56);
+        let err = check_url(&format!("http://{bad}.onion:8090/api/v1/trades"), Kind::Http).unwrap_err();
+        assert!(err.contains("base32"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn onion_destinations_still_obey_every_other_rule() {
+        // Path allowlist.
+        assert!(check_url(&format!("http://{ONION}.onion:8090/admin"), Kind::Http).is_err());
+        // Scheme.
+        assert!(check_url(&format!("https://{ONION}.onion:8090/api/v1/x"), Kind::Http).is_err());
+        // Embedded credentials.
+        assert!(check_url(&format!("http://u:p@{ONION}.onion:8090/api/v1/x"), Kind::Http).is_err());
+        // Dot segments.
+        assert!(check_url(&format!("http://{ONION}.onion:8090/api/v1/%2e%2e/admin"), Kind::Http).is_err());
+    }
+
+    /// An onion request must never be answered by the direct client: that
+    /// would put traffic we promised to send over Tor onto the clearnet.
+    #[test]
+    fn onion_requests_never_fall_back_to_the_direct_client() {
+        let clients = Clients {
+            loopback: build_client(),
+            onion: None, // as if Tor could not be configured
+        };
+        let err = clients.for_destination(Destination::Onion).unwrap_err();
+        assert!(err.contains("Tor"), "unexpected error: {err}");
+        assert!(clients.for_destination(Destination::Loopback).is_ok());
     }
 
     #[test]
@@ -447,6 +672,24 @@ mod tests {
         assert_eq!(check_method("PATCH").unwrap(), "PATCH");
         for bad in ["CONNECT", "TRACE", "OPTIONS", "", "GET /x HTTP/1.1"] {
             assert!(check_method(bad).is_err(), "{bad:?} should be refused");
+        }
+    }
+}
+
+#[cfg(test)]
+mod connect_screen_tests {
+    use super::*;
+
+    /// The connect screen probes these two before anything is configured. If
+    /// the allowlist ever stops accepting them, the packaged app silently
+    /// loses its only way to reach a real node.
+    #[test]
+    fn the_connect_screen_probe_paths_are_allowed() {
+        for p in [
+            "http://127.0.0.1:8090/api/v1/settings/version",
+            "http://127.0.0.1:8090/api/v1/explorer/selected",
+        ] {
+            assert!(check_url(p, Kind::Http).is_ok(), "probe path rejected: {p}");
         }
     }
 }

@@ -20,6 +20,10 @@ import { TradeState } from './adapters/onramp-adapter.js';
 import { MockAdapter } from './adapters/mock-adapter.js';
 import { BisqAdapter } from './adapters/bisq-adapter.js';
 import { ExternalWallet, isValidBtcAddress } from './adapters/wallet.js';
+import { BuiltinWallet } from './adapters/builtin-wallet.js';
+import { btcToSats } from './adapters/amount.js';
+import { tauriApi, pickTransport } from './adapters/transport.js';
+import { normaliseNodeUrl, probeNode } from './adapters/node-probe.js';
 import { qrSvg } from './vendor/qr.js';
 
 // ---------------------------------------------------------------
@@ -31,8 +35,11 @@ const state = {
   offers: [],            // last offer book fetched from the adapter
   selectedOffer: null,   // the offer the user picked (step 2)
   amountEur: 0,          // what they will send by SEPA (step 3)
-  receiveAddress: '',    // their own BTC address, checksum-validated (step 3)
+  receiveAddress: '',    // the address the coins go to — from the built-in wallet, or typed
+  walletMode: 'external',// 'builtin' once we know the shell can host a wallet
+  walletStatus: null,    // {exists, backedUp} for the built-in wallet, null until checked
   trade: null,           // the live trade, once taken (step 4)
+  resumable: null,       // a trade left running from a previous session
 };
 
 // ---------------------------------------------------------------
@@ -68,10 +75,27 @@ function createAdapter() {
       const network = setting(q, 'network') || 'mainnet';
       // The wallet asks the UI for the address at the moment it needs one, so
       // what the user typed in step 3 is what the seller is told to pay.
-      const wallet = new ExternalWallet({
+      const typedWallet = new ExternalWallet({
         addressProvider: () => state.receiveAddress,
         network,
       });
+      /* One wallet object, two sources. Which one answers is decided when the
+       * address is actually needed, so switching modes mid-session is safe and
+       * BisqAdapter never learns there was a choice. */
+      const wallet = {
+        getReceiveAddress: async () => {
+          const from = state.walletMode === 'builtin' && builtinWallet ? builtinWallet : typedWallet;
+          const address = await from.getReceiveAddress();
+          // Remember it so the review and completion screens can show where
+          // the coins went, whichever wallet produced it.
+          state.receiveAddress = address;
+          return address;
+        },
+        getBalance: () =>
+          (state.walletMode === 'builtin' && builtinWallet ? builtinWallet : typedWallet).getBalance(),
+        withdraw: (addr, sats) =>
+          (state.walletMode === 'builtin' && builtinWallet ? builtinWallet : typedWallet).withdraw(addr, sats),
+      };
       // Authenticated nodes (authorizationRequired=true): paste the pairing QR
       // payload once as `cryptobridge.pairing`. It is spent immediately and
       // replaced by the credentials the node issues.
@@ -108,8 +132,44 @@ function createAdapter() {
   return new MockAdapter({ latencyScale: reducedMotion() ? 0.2 : 1 });
 }
 
-const adapter = createAdapter();
+let adapter = createAdapter();
 let adapterReady = null;
+
+/* The built-in wallet, when the shell can host one. Absent in a browser: we
+ * will not generate keys in a webview and keep them in localStorage, which is
+ * exactly the design the built-in wallet replaces. There, the user still
+ * supplies an address.
+ *
+ * Built AFTER the adapter and from the adapter's own network, not from the
+ * settings, so a regtest session can never derive mainnet keys (or the other
+ * way round). Those are different coins on different chains; a mismatch means
+ * the seller is handed an address their node cannot pay. */
+function makeBuiltinWallet() {
+  const api = tauriApi();
+  if (!BuiltinWallet.isAvailable(api)) return null;
+  try {
+    return new BuiltinWallet(api, adapter.getBackendInfo().network);
+  } catch (err) {
+    console.error('built-in wallet unavailable:', err.message);
+    return null;
+  }
+}
+let builtinWallet = makeBuiltinWallet();
+if (builtinWallet) state.walletMode = 'builtin';
+
+/** Swap in a backend chosen on the connect screen, without a reload. The
+ *  wallet is rebuilt too, because it takes its chain from the adapter. */
+async function rebuildBackend() {
+  try { await adapter.close?.(); } catch { /* already gone */ }
+  adapter = createAdapter();
+  builtinWallet = makeBuiltinWallet();
+  state.walletMode = builtinWallet ? 'builtin' : 'external';
+  state.walletStatus = null;
+  state.offers = [];
+  state.selectedOffer = null;
+  bindBackendStatus();
+  setStep(1);
+}
 
 // ---------------------------------------------------------------
 // Formatting helpers (German locale for money, plain for BTC)
@@ -171,6 +231,178 @@ function bindBackendStatus() {
   });
   adapterReady = adapter.init();
   adapterReady.catch((err) => console.error('backend init failed', err));
+}
+
+// ---------------------------------------------------------------
+// Connect screen
+//
+// Until this existed the packaged app could not reach a real node at all:
+// the backend was read from the query string (a packaged app has none) or
+// from localStorage (which needs devtools, and release builds have none).
+// So the shipped artifact could only ever run the demo.
+// ---------------------------------------------------------------
+
+const SETTING_KEYS = { backend: 'cryptobridge.backend', node: 'cryptobridge.node',
+                       network: 'cryptobridge.network', pairing: 'cryptobridge.pairing' };
+
+function storeSetting(key, value) {
+  try {
+    if (value === null || value === undefined || value === '') localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch { /* storage denied: this session still works, the next forgets */ }
+}
+
+/** Has the user ever made a choice here? Absent means first run. */
+function hasBackendChoice() {
+  try { return !!localStorage.getItem(SETTING_KEYS.backend); } catch { return false; }
+}
+
+function connectResult(kind, message) {
+  const el = $('#connectResult');
+  el.hidden = !message;
+  el.textContent = message || '';
+  if (message) el.dataset.kind = kind;
+}
+
+function openConnect() {
+  const o = $('#connectOverlay');
+  try {
+    $('#connectUrl').value = localStorage.getItem(SETTING_KEYS.node) || 'http://127.0.0.1:8090/api/v1';
+    const net = localStorage.getItem(SETTING_KEYS.network);
+    if (net) $('#connectNetwork').value = net;
+  } catch { /* defaults are fine */ }
+  connectResult('', '');
+  o.classList.add('show');
+  o.setAttribute('aria-hidden', 'false');
+  refreshNode();
+  $('#connectUrl').focus();
+}
+
+function closeConnect() {
+  const o = $('#connectOverlay');
+  o.classList.remove('show');
+  o.setAttribute('aria-hidden', 'true');
+}
+
+/* The node the app talks to. We can start one if the machine has Bisq; if it
+ * does not, saying so precisely beats "could not connect". */
+async function refreshNode() {
+  const block = $('#nodeBlock');
+  if (!tauriApi()) { block.hidden = true; return; }   // browser: nothing to supervise
+  let st;
+  try {
+    st = await tauriApi().invoke('node_status');
+  } catch (e) {
+    block.hidden = true;
+    return;
+  }
+  block.hidden = false;
+  const detail = $('#nodeDetail');
+  if (st.running) {
+    detail.dataset.kind = 'ok';
+    detail.textContent = `A Bisq node is running (started by this app, pid ${st.pid}).`;
+  } else {
+    detail.dataset.kind = '';
+    detail.textContent = st.detail || 'A Bisq node is installed and ready to start.';
+  }
+  // Only offer to start what we can actually start.
+  $('#nodeStartBtn').hidden = st.running || !st.installed || !st.java;
+  $('#nodeStopBtn').hidden = !st.running;
+  if (st.api_url && !$('#connectUrl').value) $('#connectUrl').value = st.api_url;
+}
+
+async function onNodeStart() {
+  const btn = $('#nodeStartBtn');
+  btn.disabled = true;
+  connectResult('', 'Starting the Bisq node — this takes a moment…');
+  try {
+    await tauriApi().invoke('node_start', { clearnet: false });
+    connectResult('', 'Node starting. Give it a moment, then connect.');
+  } catch (e) {
+    connectResult('error', e?.message || String(e));
+  } finally {
+    btn.disabled = false;
+    refreshNode();
+  }
+}
+
+async function onNodeStop() {
+  try { await tauriApi().invoke('node_stop'); }
+  catch (e) { connectResult('error', e?.message || String(e)); }
+  refreshNode();
+}
+
+async function onConnect() {
+  const btn = $('#connectBtn');
+  const norm = normaliseNodeUrl($('#connectUrl').value);
+  if (norm.error) { connectResult('error', norm.error); return; }
+
+  const network = $('#connectNetwork').value;
+  const pairing = $('#connectPairing').value.trim();
+
+  btn.disabled = true;
+  connectResult('', 'Looking for a node…');
+  try {
+    // A read-only look first, purely so the message can be specific. This
+    // deliberately avoids adapter.init(), which creates a user identity on
+    // the node — a connection test must leave nothing behind.
+    const probe = await probeNode(pickTransport(), norm.url);
+
+    if (!probe.ok && probe.reason === 'needs-pairing' && !pairing) {
+      $('#connectPairingWrap').hidden = false;
+      connectResult('warn', probe.message);
+      $('#connectPairing').focus();
+      return;
+    }
+    if (!probe.ok && probe.reason !== 'needs-pairing') {
+      connectResult('error', probe.message);
+      return;
+    }
+    // Save, then actually connect — that, not the probe, is the proof.
+    storeSetting(SETTING_KEYS.backend, 'bisq');
+    storeSetting(SETTING_KEYS.node, norm.url);
+    storeSetting(SETTING_KEYS.network, network);
+    if (pairing) storeSetting(SETTING_KEYS.pairing, pairing);
+
+    connectResult('', 'Connecting…');
+    await rebuildBackend();
+    await adapterReady;
+
+    /* Connected -- now ask the node how it reaches trade peers. This is the
+     * only leg where Tor matters: our own hop to the node is loopback and
+     * never leaves the machine. A node on the open internet shows the user's
+     * IP address to the stranger they are about to send euros to. */
+    const info = adapter.getBackendInfo();
+    const privacy = await adapter.getPrivacyStatus();
+
+    if (privacy.level === 'block') {
+      // Do not keep the choice: otherwise the next launch silently reconnects
+      // into exactly the state we just refused.
+      storeSetting(SETTING_KEYS.backend, null);
+      connectResult('error', `${privacy.headline}. ${privacy.detail}`);
+      return;
+    }
+
+    const version = probe.version ? ` (node ${probe.version})` : '';
+    if (privacy.level === 'warn') {
+      connectResult('warn', `Connected to Bisq on ${info.network}${version}. ${privacy.headline}. ${privacy.detail}`);
+    } else {
+      connectResult('ok', `Connected to Bisq on ${info.network}${version}. ${privacy.headline}.`);
+      setTimeout(closeConnect, 1200);
+    }
+    $('#connectPairing').value = '';
+  } catch (err) {
+    connectResult('error', err?.message || 'Could not connect to that node.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function onUseDemo() {
+  storeSetting(SETTING_KEYS.backend, 'mock');
+  storeSetting(SETTING_KEYS.pairing, null);
+  await rebuildBackend();
+  closeConnect();
 }
 
 // ---------------------------------------------------------------
@@ -238,7 +470,16 @@ function offerCardEl(offer) {
   $('.offer-premium', btn).textContent = fmtPremium(offer.premiumPct);
 
   const rep = $('.offer-rep', btn);
-  if (offer.reputation != null) rep.textContent = `reputation ${offer.reputation}`;
+  if (offer.reputation != null) {
+    // Stars when we have them: "reputation 0" reads as a formatting glitch,
+    // where "no reputation yet" is the actual, and important, fact.
+    const stars = offer.reputationStars;
+    rep.textContent = offer.reputation === 0
+      ? 'no reputation yet'
+      : (typeof stars === 'number' && stars > 0
+          ? `reputation ${offer.reputation} · ${stars.toFixed(1)}/5`
+          : `reputation ${offer.reputation}`);
+  }
   else rep.remove();
 
   return btn;
@@ -312,7 +553,253 @@ function initAmountStep() {
   ]);
   $('#amountHint').textContent =
     `This seller accepts between ${fmtEUR(offer.minEur)} and ${fmtEUR(offer.maxEur)}.`;
+  refreshWallet();
   validateAmountStep();
+}
+
+// ---------------------------------------------------------------
+// Step 3 — the built-in wallet
+//
+// Four states, one at a time: no wallet / written down? / ready / bring your
+// own. The user never sees more than one, because every extra choice on this
+// screen is a chance to get bitcoin wrong.
+// ---------------------------------------------------------------
+
+/** Ask the shell what it has and repaint. Safe to call repeatedly. */
+async function refreshWallet() {
+  if (state.walletMode !== 'builtin' || !builtinWallet) { renderWallet(); return; }
+  try {
+    state.walletStatus = await builtinWallet.status();
+  } catch (err) {
+    // A wallet we cannot ask about is one we must not rely on. Fall back to a
+    // typed address rather than block the user entirely.
+    console.error('wallet status failed:', err.message);
+    state.walletMode = 'external';
+    state.walletStatus = null;
+  }
+  renderWallet();
+  validateAmountStep();
+}
+
+function renderWallet() {
+  const builtin = state.walletMode === 'builtin' && !!builtinWallet;
+  const st = state.walletStatus;
+
+  $('#walletNone').hidden        = !(builtin && st && !st.exists);
+  $('#walletBackupWrap').hidden  = !(builtin && st && st.exists && !st.backedUp);
+  const ready = builtin && st && st.exists && st.backedUp;
+  $('#walletReady').hidden = !ready;
+  if (ready) startWalletSync();
+  $('#walletExternalWrap').hidden = builtin;
+
+  // The escape hatch only appears when there is something to switch to.
+  const toggle = $('#walletToggle');
+  toggle.hidden = !builtinWallet;
+  toggle.textContent = builtin
+    ? 'I already have a wallet — let me paste an address'
+    : 'Use the wallet CryptoBridge made for me';
+}
+
+/* Chain sync: started once the wallet is real and backed up, then polled for
+ * display. Kept out of renderWallet's hot path -- it must never block the
+ * screen, and a chain that will not sync is a bad day, not a broken app. */
+let walletSyncStarted = false;
+let walletSyncTimer = null;
+
+function startWalletSync() {
+  if (walletSyncStarted || !builtinWallet) return;
+  walletSyncStarted = true;
+  builtinWallet.startSync().catch((e) => console.error('sync did not start:', e.message));
+  const tick = async () => {
+    try { renderWalletBalance(await builtinWallet.getBalance()); }
+    catch (e) { console.error('balance read failed:', e.message); }
+  };
+  tick();
+  walletSyncTimer = setInterval(tick, 5000);
+}
+
+function renderWalletBalance(b) {
+  const el = $('#walletBalance');
+  if (!el) return;
+  if (b.error) {
+    el.dataset.state = 'error';
+    el.textContent = `Balance unavailable — ${b.error}`;
+  } else if (!b.synced) {
+    el.dataset.state = 'syncing';
+    // Explicitly not "0 BTC": someone who just bought bitcoin would read a
+    // zero as the money being gone.
+    el.textContent = b.syncing
+      ? 'Checking the Bitcoin network over Tor…'
+      : 'Balance not checked yet.';
+  } else {
+    el.dataset.state = 'ok';
+    const btc = satsToBtc(b.confirmedSats ?? 0);
+    const pending = (b.pendingSats ?? 0) > 0 ? ` · ${fmtBTC(satsToBtc(b.pendingSats))} pending` : '';
+    el.textContent = `Balance ${fmtBTC(btc)}${pending}`;
+  }
+  el.hidden = false;
+}
+
+let sendToken = null;
+
+function sendResult(kind, message) {
+  const el = $('#sendResult');
+  el.hidden = !message;
+  el.textContent = message || '';
+  if (message) el.dataset.kind = kind;
+}
+
+async function openWallet() {
+  const o = $('#walletOverlay');
+  o.classList.add('show');
+  o.setAttribute('aria-hidden', 'false');
+  sendResult('', '');
+  $('#sendConfirmWrap').hidden = true;
+  sendToken = null;
+  try {
+    const b = await builtinWallet.getBalance();
+    $('#walletModalBalance').textContent = b.synced
+      ? `${fmtBTC(satsToBtc(b.confirmedSats ?? 0))} available`
+      : (b.error ? `Balance unavailable — ${b.error}` : 'Checking the Bitcoin network over Tor…');
+  } catch { $('#walletModalBalance').textContent = 'Balance unavailable.'; }
+  try {
+    const floor = await builtinWallet.feeFloor();
+    if (!$('#sendFee').value) $('#sendFee').value = String(Math.max(1, floor));
+    $('#sendFeeHint').textContent =
+      `Your peers will relay at ${floor} sat/vB or above. We cannot honestly predict how long any fee takes to confirm.`;
+  } catch { /* not synced yet; the user can still type a rate */ }
+}
+
+function closeWallet() {
+  const o = $('#walletOverlay');
+  o.classList.remove('show');
+  o.setAttribute('aria-hidden', 'true');
+  sendToken = null;
+}
+
+async function onSendReview() {
+  const address = $('#sendAddress').value.trim();
+  const sats = btcToSats($('#sendAmount').value);
+  const fee = Number.parseInt($('#sendFee').value, 10);
+  if (!address) return sendResult('error', 'Enter the address you are sending to.');
+  if (sats == null || sats <= 0) return sendResult('error', 'Enter an amount in BTC, to at most 8 decimal places.');
+  if (!Number.isFinite(fee) || fee <= 0) return sendResult('error', 'Enter a fee rate in sat/vB.');
+
+  const btn = $('#sendReviewBtn');
+  btn.disabled = true;
+  sendResult('', 'Building the transaction…');
+  try {
+    const p = await builtinWallet.previewSend(address, sats, fee);
+    sendToken = p.token;
+    $('#sendSummary').innerHTML = '';
+    const rows = [
+      ['To', p.address, true],
+      ['Amount', fmtBTC(satsToBtc(p.amount_sats)), false],
+      ['Network fee', fmtBTC(satsToBtc(p.fee_sats)), false],
+    ];
+    for (const [label, value, mono] of rows) {
+      const div = document.createElement('div');
+      div.className = 'row';
+      const l = document.createElement('span'); l.textContent = label;
+      const v = document.createElement('span'); v.textContent = value; if (mono) v.className = 'mono';
+      div.append(l, v); $('#sendSummary').appendChild(div);
+    }
+    const total = document.createElement('div');
+    total.className = 'row total';
+    const tl = document.createElement('span'); tl.textContent = 'Total leaving your wallet';
+    const tv = document.createElement('span'); tv.textContent = fmtBTC(satsToBtc(p.total_sats));
+    total.append(tl, tv); $('#sendSummary').appendChild(total);
+
+    $('#sendConfirmWrap').hidden = false;
+    sendResult('warn', 'This cannot be undone once sent. Check the address.');
+  } catch (e) {
+    sendToken = null;
+    $('#sendConfirmWrap').hidden = true;
+    sendResult('error', e?.message || 'Could not build that transaction.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function onSendConfirm() {
+  if (!sendToken) return;
+  const btn = $('#sendConfirmBtn');
+  btn.disabled = true;
+  sendResult('', 'Sending…');
+  try {
+    const txid = await builtinWallet.confirmSend(sendToken);
+    sendToken = null;                       // single use, enforced in the shell too
+    $('#sendConfirmWrap').hidden = true;
+    $('#sendAddress').value = '';
+    $('#sendAmount').value = '';
+    sendResult('ok', `Sent. Transaction ${txid}`);
+  } catch (e) {
+    sendResult('error', e?.message || 'The transaction was not sent.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function onCreateWallet() {
+  const btn = $('#walletCreateBtn');
+  const err = $('#walletCreateError');
+  btn.disabled = true;
+  err.classList.add('hidden');
+  try {
+    state.walletStatus = await builtinWallet.create();
+    renderWallet();
+    await showRecoveryPhrase();
+  } catch (e) {
+    err.textContent = e?.message || 'Could not create a wallet.';
+    err.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    validateAmountStep();
+  }
+}
+
+/** Paint the twelve words. Held in a local only — never on state, never in
+ *  storage, and gone as soon as this function returns. */
+async function showRecoveryPhrase() {
+  const list = $('#walletWords');
+  list.replaceChildren();
+  try {
+    const words = await builtinWallet.revealRecoveryPhrase();
+    for (const w of words) {
+      const li = document.createElement('li');
+      li.textContent = w;
+      list.appendChild(li);
+    }
+  } catch (e) {
+    const li = document.createElement('li');
+    li.textContent = e?.message || 'could not read the phrase';
+    list.appendChild(li);
+  }
+}
+
+async function onConfirmBackup() {
+  const btn = $('#walletConfirmBtn');
+  const err = $('#walletBackupError');
+  const words = $('#walletConfirmInput').value.trim().split(/\s+/).filter(Boolean);
+  btn.disabled = true;
+  err.classList.add('hidden');
+  try {
+    await builtinWallet.confirmBackup(words);
+    $('#walletConfirmInput').value = '';
+    $('#walletWords').replaceChildren();   // the phrase leaves the screen for good
+    await refreshWallet();
+  } catch (e) {
+    err.textContent = e?.message || 'That did not match.';
+    err.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function onToggleWalletMode() {
+  state.walletMode = state.walletMode === 'builtin' ? 'external' : 'builtin';
+  if (state.walletMode === 'builtin') refreshWallet();
+  else { renderWallet(); validateAmountStep(); }
 }
 
 function amountProblem() {
@@ -323,6 +810,17 @@ function amountProblem() {
   if (!Number.isFinite(v) || v <= 0) return { msg: 'Enter an amount like 250 or 250,00.' };
   if (v < offer.minEur) return { msg: `This seller's minimum is ${fmtEUR(offer.minEur)}.` };
   if (v > offer.maxEur) return { msg: `This seller's maximum is ${fmtEUR(offer.maxEur)}.` };
+  return null;
+}
+
+/** In built-in mode the gate is "is there a wallet, and is it backed up",
+ *  not "is this string a valid address". */
+function walletProblem() {
+  if (state.walletMode !== 'builtin') return addressProblem();
+  const st = state.walletStatus;
+  if (!st) return { silent: true, msg: 'Checking your wallet…' };
+  if (!st.exists) return { silent: true, msg: 'Create a wallet to continue.' };
+  if (!st.backedUp) return { silent: true, msg: 'Write down your recovery phrase to continue.' };
   return null;
 }
 
@@ -348,12 +846,13 @@ function validateAmountStep() {
   amountErr.classList.toggle('hidden', !(aProb && !aProb.silent));
   $('#amountInput').classList.toggle('field-invalid', !!(aProb && !aProb.silent));
 
-  const dProb = addressProblem();
+  const dProb = walletProblem();
   const addrErr = $('#addrError');
-  addrErr.textContent = dProb && !dProb.silent ? dProb.msg : '';
-  addrErr.classList.toggle('hidden', !(dProb && !dProb.silent));
-  $('#addrInput').classList.toggle('field-invalid', !!(dProb && !dProb.silent));
-  $('#addrInput').classList.toggle('field-valid', !dProb);
+  const showAddrErr = state.walletMode === 'external' && dProb && !dProb.silent;
+  addrErr.textContent = showAddrErr ? dProb.msg : '';
+  addrErr.classList.toggle('hidden', !showAddrErr);
+  $('#addrInput').classList.toggle('field-invalid', !!showAddrErr);
+  $('#addrInput').classList.toggle('field-valid', state.walletMode === 'external' && !dProb);
 
   const ok = !aProb && !dProb;
   if (ok) {
@@ -373,6 +872,29 @@ function validateAmountStep() {
 function bindAmountStep() {
   $('#amountInput').addEventListener('input', validateAmountStep);
   $('#addrInput').addEventListener('input', validateAmountStep);
+  $('#resumeBtn').addEventListener('click', onResume);
+  $('#walletOpenBtn').addEventListener('click', openWallet);
+  $('#sendReviewBtn').addEventListener('click', onSendReview);
+  $('#sendConfirmBtn').addEventListener('click', onSendConfirm);
+  $('#sendCancelBtn').addEventListener('click', () => {
+    $('#sendConfirmWrap').hidden = true; sendToken = null; sendResult('', '');
+  });
+  $('#walletOverlay').addEventListener('click', (e) => {
+    if (e.target === $('#walletOverlay')) closeWallet();
+  });
+  $('#backendPill').addEventListener('click', openConnect);
+  $('#connectBtn').addEventListener('click', onConnect);
+  $('#nodeStartBtn').addEventListener('click', onNodeStart);
+  $('#nodeStopBtn').addEventListener('click', onNodeStop);
+  $('#connectDemoBtn').addEventListener('click', onUseDemo);
+  $('#connectOverlay').addEventListener('click', (e) => {
+    // Click the backdrop to dismiss — but only once a backend is chosen, so
+    // first run cannot be skipped into a broken state.
+    if (e.target === $('#connectOverlay') && hasBackendChoice()) closeConnect();
+  });
+  $('#walletCreateBtn').addEventListener('click', onCreateWallet);
+  $('#walletConfirmBtn').addEventListener('click', onConfirmBackup);
+  $('#walletToggle').addEventListener('click', onToggleWalletMode);
 }
 
 // ---------------------------------------------------------------
@@ -664,11 +1186,22 @@ async function runTrade() {
   const fiatAmountEur = state.amountEur;
   const trade = await adapter.takeOffer(offer.id, { fiatAmountEur });
   state.trade = trade;
+  await watchTrade(trade.id, fiatAmountEur);
+}
 
+/** Follow a trade to its end: pause at the fiat leg, then see it through.
+ *
+ * Split out of runTrade so resuming can reuse it. A resumed trade joins
+ * wherever it already is -- the subscription fires immediately with the
+ * current state, so a trade already past the fiat leg simply does not stop
+ * there. `fiatAmountEur` may be null on resume: the node's trade snapshot
+ * carries no amounts, and the payment screen must show what is real rather
+ * than invent a figure. */
+async function watchTrade(tradeId, fiatAmountEur) {
   const btn = $('#confirmBridgeBtn');
   let shownPayment = false;
   await new Promise((resolve, reject) => {
-    const unsub = adapter.subscribeTrade(trade.id, async (tradeState, updated) => {
+    const unsub = adapter.subscribeTrade(tradeId, async (tradeState, updated) => {
       if (updated) state.trade = updated;
       if (TRADE_LABELS[tradeState]) {
         btn.innerHTML = `<span class="spinner"></span> ${TRADE_LABELS[tradeState]}`;
@@ -678,8 +1211,8 @@ async function runTrade() {
         // user to make the SEPA transfer from their own bank.
         if (tradeState === TradeState.AWAITING_FIAT_PAYMENT && !shownPayment) {
           shownPayment = true;
-          const instr = await adapter.getPaymentInstructions(trade.id);
-          await presentPayment(trade.id, instr, fiatAmountEur);
+          const instr = await adapter.getPaymentInstructions(tradeId);
+          await presentPayment(tradeId, instr, fiatAmountEur);
         }
         if (tradeState === TradeState.FIAT_RECEIVED) {
           paymentPhase('wait', 'Seller confirmed the payment — releasing your bitcoin…');
@@ -687,7 +1220,7 @@ async function runTrade() {
         if (tradeState === TradeState.BTC_RELEASED) {
           // Non-custodial backends (BisqAdapter) don't auto-assert receipt.
           if (typeof adapter.confirmBtcReceived === 'function' && adapter.autoConfirmBtcReceipt !== true) {
-            await presentReceive(trade.id);
+            await presentReceive(tradeId);
           } else {
             paymentPhase('wait', 'Finalising the trade…');
           }
@@ -699,6 +1232,61 @@ async function runTrade() {
       }
     });
   });
+}
+
+// ---------------------------------------------------------------
+// Resuming a trade left running from a previous session
+// ---------------------------------------------------------------
+
+const RESUME_LABELS = {
+  [TradeState.OFFER_TAKEN]:           'waiting for the seller’s bank details',
+  [TradeState.AWAITING_FIAT_PAYMENT]: 'waiting for your SEPA transfer',
+  [TradeState.FIAT_SENT]:             'waiting for the seller to confirm your payment',
+  [TradeState.FIAT_RECEIVED]:         'seller confirmed — bitcoin being released',
+  [TradeState.BTC_RELEASED]:          'bitcoin released',
+};
+
+async function checkForOpenTrades() {
+  if (typeof adapter.listOpenTrades !== 'function') return;
+  let open = [];
+  try {
+    open = await adapter.listOpenTrades();
+  } catch (e) {
+    // Never let this break startup: it is an extra, and the user can still
+    // begin a new trade.
+    console.error('could not list open trades:', e.message);
+    return;
+  }
+  if (!open.length) return;
+
+  const t = open[0];
+  state.resumable = t;
+  // An unmapped state is deliberately possible — see listOpenTrades. Say
+  // something true and vague rather than inventing a step.
+  const label = (t.state && RESUME_LABELS[t.state]) || 'in progress';
+  $('#resumeDetail').textContent =
+    `${label}${t.sellerDetails ? ` · ${t.sellerDetails}` : ''}`;
+  $('#resumeBanner').hidden = false;
+}
+
+async function onResume() {
+  const t = state.resumable;
+  if (!t) return;
+  const btn = $('#resumeBtn');
+  btn.disabled = true;
+  try {
+    $('#resumeBanner').hidden = true;
+    setStep(4);
+    // No amount: the node's snapshot carries none, and showing a made-up
+    // figure next to someone's money would be worse than showing none.
+    await watchTrade(t.id, null);
+    setStep(5);
+  } catch (e) {
+    console.error('resume failed:', e.message);
+    $('#resumeBanner').hidden = false;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function bindTakeOffer() {
@@ -848,4 +1436,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   bindTakeOffer();
   bindNewTrade();
   if (!(await applyDeepLink())) setStep(1);
+
+  // Once the backend is up, see whether a trade was left running. Deliberately
+  // not awaited before the first paint: the app stays usable while the node
+  // is still connecting.
+  adapterReady?.then(checkForOpenTrades).catch(() => {});
+
+  /* First run in the packaged app: ask what to connect to, because there is no
+   * other way to say. Not in a browser -- there the query string still works,
+   * and an unskippable modal would be in the way of development and of the
+   * e2e suite. */
+  if (tauriApi() && !hasBackendChoice()) openConnect();
 });

@@ -33,12 +33,21 @@ test('cancel/reject/failed states map to FAILED; unknowns map to null', () => {
 });
 
 test('a DID_NOT_RECEIVED_ACCOUNT_DATA state must NOT read as awaiting payment', () => {
-  // The map matches BUYER_RECEIVED_ACCOUNT_DATA by substring; the negated form
-  // ("DID_NOT_RECEIVED") must not trip it. It is a transitional state we ignore
-  // (null) — the trade correctly stays at whatever was last emitted (OFFER_TAKEN).
+  // The safety property, unchanged: the map matches BUYER_RECEIVED_ACCOUNT_DATA
+  // by substring, and the negated form ("DID_NOT_RECEIVED") must not trip it.
+  // Telling someone to pay before the seller has sent bank details would be
+  // the worst possible misread.
   const early = 'TAKER_RECEIVED_TAKE_OFFER_RESPONSE__BUYER_DID_NOT_SENT_BTC_ADDRESS__BUYER_DID_NOT_RECEIVED_ACCOUNT_DATA';
-  assert.equal(mapBisqState(early), null);
   assert.notEqual(mapBisqState(early), TradeState.AWAITING_FIAT_PAYMENT);
+
+  // What changed: this used to return null, on the reasoning that ignoring a
+  // transitional state leaves the live subscription at the last state it
+  // emitted -- which is true, and was fine while the subscription was the
+  // only consumer. Trade resume reads the same map with no "last state" to
+  // fall back on, so null meant a trade the user may have paid for simply did
+  // not appear. The state is now mapped to what it actually means: the
+  // contract exists and we are waiting on the seller.
+  assert.equal(mapBisqState(early), TradeState.OFFER_TAKEN);
 });
 
 // ---- Bitcoin address validation (bech32/bech32m checksum) ------------------
@@ -167,4 +176,94 @@ test('ExternalWallet addressProvider reads live UI state and re-validates every 
   // And a wrong-chain address cannot sneak in on a later edit either.
   ui.receiveAddress = 'bcrt1qqv9pzxqlyckngw6zf9g9whn9d3eh4qvg0z9lm9';
   await assert.rejects(() => w.getReceiveAddress(), /failed validation/);
+});
+
+// ---- trade resume ---------------------------------------------------------
+
+import { wsUrlForRestBase, isTerminalBisqState, WS_SUB_ID } from '../src/adapters/bisq-adapter.js';
+
+/* These two URLs must address the same node. They did not: wsUrl had a fixed
+ * default of port 8090 whatever restBaseUrl said, so a node on another port
+ * served REST from itself and events from whatever was on 8090 -- and the
+ * adapter reported that other node's trades as yours, without erroring. */
+test('the WebSocket URL is derived from the REST base, not fixed', () => {
+  assert.equal(wsUrlForRestBase('http://127.0.0.1:8091/api/v1'), 'ws://127.0.0.1:8091/websocket');
+  assert.equal(wsUrlForRestBase('http://127.0.0.1:8090/api/v1/'), 'ws://127.0.0.1:8090/websocket');
+  assert.equal(wsUrlForRestBase('http://127.0.0.1:9999/api/v1'), 'ws://127.0.0.1:9999/websocket');
+});
+
+test('a BisqAdapter built with only a REST base points both at the same node', () => {
+  const a = new BisqAdapter({
+    restBaseUrl: 'http://127.0.0.1:8091/api/v1',
+    wallet: new ExternalWallet({ address: 'bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu', network: 'mainnet' }),
+  });
+  assert.equal(a.wsUrl, 'ws://127.0.0.1:8091/websocket');
+  assert.ok(a.wsUrl.includes('8091'), 'the event stream must follow the REST base');
+});
+
+test('the state a live node reports right after taking an offer is mapped', () => {
+  // Captured verbatim from Bisq 2.1.11. It mapped to null, which made the
+  // trade disappear from the resume list entirely.
+  const raw = 'TAKER_RECEIVED_TAKE_OFFER_RESPONSE__BUYER_SENT_BTC_ADDRESS__BUYER_DID_NOT_RECEIVED_ACCOUNT_DATA';
+  assert.equal(mapBisqState(raw), TradeState.OFFER_TAKEN);
+  // And it must NOT be read as "the buyer has the account data": the needle
+  // RECEIVED_ACCOUNT_DATA appears inside DID_NOT_RECEIVED_ACCOUNT_DATA.
+  assert.notEqual(mapBisqState(raw), TradeState.AWAITING_FIAT_PAYMENT);
+});
+
+test('isTerminalBisqState covers finished and abandoned trades only', () => {
+  for (const t of ['BTC_CONFIRMED', 'PEER_CANCELLED', 'REJECTED', 'FAILED_AT_PEER']) {
+    assert.equal(isTerminalBisqState(t), true, t);
+  }
+  for (const t of ['TAKER_RECEIVED_TAKE_OFFER_RESPONSE__BUYER_SENT_BTC_ADDRESS',
+                   'BUYER_SENT_FIAT_SENT_CONFIRMATION', 'INIT', '', null]) {
+    assert.equal(isTerminalBisqState(t), false, String(t));
+  }
+});
+
+/** An adapter with a pre-populated snapshot and no network. */
+function adapterWithTrades(props) {
+  const a = new BisqAdapter({
+    wallet: new ExternalWallet({ address: 'bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu', network: 'mainnet' }),
+  });
+  a.tradeSnapshotSeen = true;
+  for (const [id, p] of Object.entries(props)) a.tradeProps.set(id, p);
+  return a;
+}
+
+test('listOpenTrades returns the live ones and drops the finished ones', async () => {
+  const a = adapterWithTrades({
+    done:  { tradeState: 'BTC_CONFIRMED', paymentAccountData: 'x' },
+    gone:  { tradeState: 'PEER_CANCELLED' },
+    live:  { tradeState: 'BUYER_SENT_FIAT_SENT_CONFIRMATION',
+             paymentAccountData: 'Alice, IBAN DE02…', bitcoinPaymentData: 'bcrt1qabc' },
+  });
+  const open = await a.listOpenTrades();
+  assert.equal(open.length, 1);
+  assert.equal(open[0].id, 'live');
+  assert.equal(open[0].state, TradeState.FIAT_SENT);
+  assert.equal(open[0].sellerDetails, 'Alice, IBAN DE02…');
+  assert.equal(open[0].receiveAddress, 'bcrt1qabc');
+});
+
+/* The failure that matters most here. Bisq's state strings are compound and
+ * there are more of them than we map. Dropping a trade we cannot label would
+ * hide a trade the user may already have paid for. */
+test('a trade whose state we cannot map is still listed, not silently dropped', async () => {
+  const a = adapterWithTrades({
+    weird: { tradeState: 'SOME_STATE_NOBODY_HAS_SEEN_YET', paymentAccountData: 'Alice' },
+  });
+  const open = await a.listOpenTrades();
+  assert.equal(open.length, 1, 'an unmappable trade must never vanish');
+  assert.equal(open[0].state, null, 'and must not be given an invented state');
+  assert.equal(open[0].rawState, 'SOME_STATE_NOBODY_HAS_SEEN_YET');
+});
+
+test('a trade with no state at all is skipped', async () => {
+  const a = adapterWithTrades({ empty: { paymentAccountData: 'Alice' } });
+  assert.equal((await a.listOpenTrades()).length, 0);
+});
+
+test('the subscription id is the one the snapshot is matched against', () => {
+  assert.equal(WS_SUB_ID, 'sub-props');
 });

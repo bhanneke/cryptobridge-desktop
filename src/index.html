@@ -30,10 +30,10 @@
         </a>
       </div>
       <div class="flex items-center gap-3">
-        <div id="backendPill" class="backend-pill" data-status="connecting" title="Trading backend the OnrampAdapter is connected to">
+        <button id="backendPill" type="button" class="backend-pill" data-status="connecting" title="Change which Bisq node this app talks to">
           <span class="backend-dot" aria-hidden="true"></span>
           <span id="backendLabel">connecting…</span>
-        </div>
+        </button>
         <div id="stepIndicator" class="text-[13px] font-medium text-ink2 tabular-nums">Step 1 of 5</div>
       </div>
     </div>
@@ -50,6 +50,18 @@
       <!-- STEP 1 — Welcome                              -->
       <!-- ============================================ -->
       <section data-step="1" class="step active">
+        <!-- A trade left running from a previous session. Shown before
+             anything else on the screen: someone who has already sent money
+             should not have to find this. -->
+        <div id="resumeBanner" class="resume-banner" hidden>
+          <span class="material-symbols-outlined text-[20px]" aria-hidden="true">history</span>
+          <div class="resume-body">
+            <p class="resume-title">You have a trade in progress</p>
+            <p id="resumeDetail" class="resume-detail"></p>
+          </div>
+          <button id="resumeBtn" type="button" class="btn-secondary">Open it</button>
+        </div>
+
         <div class="relative flex flex-col items-center text-center gap-8 py-8">
           <!-- Ambient aurora backdrop -->
           <div class="aurora" aria-hidden="true">
@@ -176,22 +188,65 @@
           </div>
 
           <div class="flex flex-col gap-2">
-            <label for="addrInput" class="text-[13px] font-medium text-ink2">Your bitcoin receive address</label>
-            <input id="addrInput" type="text" spellcheck="false" autocomplete="off" autocapitalize="none"
-              placeholder="bc1…"
-              class="w-full h-14 px-4 bg-surface border border-line rounded-xl2 text-[14px] font-mono placeholder:text-muted focus:outline-none focus:border-indigo focus:shadow-ring transition" />
-            <p id="addrHint" class="text-[13px] text-muted">
-              The seller sends the bitcoin straight here. Paste an address from a wallet you control.
-            </p>
-            <p id="addrError" class="hidden text-[13px] err-text"></p>
+            <span class="text-[13px] font-medium text-ink2">Where your bitcoin goes</span>
+
+            <!-- No wallet yet: offer to make one. -->
+            <div id="walletNone" class="wallet-card" hidden>
+              <p><strong>You don't have a bitcoin wallet yet.</strong> CryptoBridge can create one on
+                 this computer. The keys are generated here and stay here — we never see them, and we
+                 cannot move your bitcoin even if we wanted to.</p>
+              <button id="walletCreateBtn" type="button" class="btn-secondary">
+                <span class="material-symbols-outlined text-[18px]" aria-hidden="true">add</span>
+                Create my wallet
+              </button>
+              <p id="walletCreateError" class="hidden text-[13px] err-text"></p>
+            </div>
+
+            <!-- Made, but not written down yet. -->
+            <div id="walletBackupWrap" class="wallet-card wallet-card--warn" hidden>
+              <p><strong>Write these twelve words down, on paper, in this order.</strong> They are the
+                 only way to get your bitcoin back if this computer is lost, stolen or breaks. Anyone
+                 who has them can spend your money, so keep them off screens and out of photos.</p>
+              <ol id="walletWords" class="wallet-words"></ol>
+              <label for="walletConfirmInput" class="text-[13px] font-medium">Now type them back, to prove the copy is good</label>
+              <textarea id="walletConfirmInput" class="wallet-confirm" rows="2" spellcheck="false"
+                autocomplete="off" autocapitalize="none" placeholder="word word word …"></textarea>
+              <p id="walletBackupError" class="hidden text-[13px] err-text"></p>
+              <button id="walletConfirmBtn" type="button" class="btn-secondary">I've written them down</button>
+            </div>
+
+            <!-- Ready. -->
+            <div id="walletReady" class="wallet-card wallet-card--ready" hidden>
+              <span class="material-symbols-outlined text-[18px]" aria-hidden="true">account_balance_wallet</span>
+              <div class="wallet-ready-body">
+                <p><strong>Your CryptoBridge wallet is ready.</strong> Each trade uses a brand-new
+                   address, so your purchases cannot be tied together by anyone watching the chain.</p>
+                <p id="walletBalance" class="wallet-balance" hidden></p>
+                <button id="walletOpenBtn" type="button" class="wallet-toggle">Open your wallet</button>
+              </div>
+            </div>
+
+            <!-- Bring your own address. -->
+            <div id="walletExternalWrap" class="flex flex-col gap-2" hidden>
+              <label for="addrInput" class="text-[13px] font-medium text-ink2">Your bitcoin receive address</label>
+              <input id="addrInput" type="text" spellcheck="false" autocomplete="off" autocapitalize="none"
+                placeholder="bc1…"
+                class="w-full h-14 px-4 bg-surface border border-line rounded-xl2 text-[14px] font-mono placeholder:text-muted focus:outline-none focus:border-indigo focus:shadow-ring transition" />
+              <p id="addrHint" class="text-[13px] text-muted">
+                The seller sends the bitcoin straight here. Paste an address from a wallet you control.
+              </p>
+              <p id="addrError" class="hidden text-[13px] err-text"></p>
+            </div>
+
+            <button id="walletToggle" type="button" class="wallet-toggle" hidden></button>
           </div>
 
           <div class="custody-note">
             <span class="material-symbols-outlined text-[18px]">key_off</span>
             <p>
-              <strong>We never hold your keys.</strong> CryptoBridge has no wallet of its own — it cannot
-              receive, hold or move your bitcoin. Check the address carefully: a payment to the wrong
-              address cannot be reversed by us or by anyone.
+              <strong>We never hold your keys.</strong> Whether you use the built-in wallet or your own
+              address, the keys exist only on this computer — CryptoBridge cannot receive, hold or move
+              your bitcoin. A payment to the wrong address cannot be reversed by us or by anyone.
             </p>
           </div>
         </div>
@@ -315,10 +370,10 @@
           <div class="custody-note">
             <span class="material-symbols-outlined text-[18px]">key_off</span>
             <p>
-              <strong>CryptoBridge does not track your balance.</strong> The bitcoin is in your own
-              wallet, not with us — we never had custody of it and cannot see, move or freeze it.
-              Confirm the arrival in your wallet, and verify the transaction on a block explorer
-              of your choosing.
+              <strong>We never had custody of this bitcoin.</strong> It went straight to your own
+              wallet and we cannot move or freeze it. If you used the built-in wallet, the balance
+              it shows is read from the Bitcoin network on this computer, over Tor — no server is
+              told which addresses are yours. You can verify the transaction on any block explorer.
             </p>
           </div>
 
@@ -341,6 +396,122 @@
       </div>
     </footer>
   </main>
+
+  <!-- Connect screen — point the app at a Bisq node -->
+  <div id="connectOverlay" class="modal" role="dialog" aria-modal="true" aria-labelledby="connectTitle" aria-hidden="true">
+    <div class="modal-card connect-card">
+      <div class="pay-head">
+        <span class="pay-badge material-symbols-outlined" aria-hidden="true">lan</span>
+        <div>
+          <h2 id="connectTitle" class="text-[19px] font-semibold tracking-tight leading-tight">Connect to your Bisq node</h2>
+          <p class="text-[13px] text-ink2 mt-0.5">CryptoBridge does not trade for you. A Bisq node on this computer does, and this app is its front end.</p>
+        </div>
+      </div>
+
+      <div class="connect-body">
+        <!-- If we can start a node ourselves, offer that before asking the
+             user to go and find one. -->
+        <div id="nodeBlock" class="node-block" hidden>
+          <p id="nodeDetail" class="node-detail"></p>
+          <div class="node-actions">
+            <button id="nodeStartBtn" type="button" class="btn-secondary" hidden>
+              <span class="material-symbols-outlined text-[18px]" aria-hidden="true">play_arrow</span>
+              Start a node for me
+            </button>
+            <button id="nodeStopBtn" type="button" class="wallet-toggle" hidden>Stop the node</button>
+          </div>
+        </div>
+
+        <div class="flex flex-col gap-2">
+          <label for="connectUrl" class="text-[13px] font-medium text-ink2">Node address</label>
+          <input id="connectUrl" type="text" spellcheck="false" autocomplete="off" autocapitalize="none"
+            placeholder="127.0.0.1:8090"
+            class="w-full h-12 px-4 bg-surface border border-line rounded-xl2 text-[14px] font-mono placeholder:text-muted focus:outline-none focus:border-indigo focus:shadow-ring transition" />
+          <p class="text-[12px] text-muted">Where Bisq's API is listening. The default suits a standard local install. A node on another machine can be reached at its <code>.onion</code> address, through Tor.</p>
+        </div>
+
+        <div id="connectPairingWrap" class="flex flex-col gap-2" hidden>
+          <label for="connectPairing" class="text-[13px] font-medium text-ink2">Pairing code</label>
+          <textarea id="connectPairing" class="wallet-confirm" rows="2" spellcheck="false"
+            autocomplete="off" autocapitalize="none" placeholder="Paste the pairing code from Bisq"></textarea>
+          <p class="text-[12px] text-muted">Your node asks callers to authenticate. Bisq shows this code under its API settings.</p>
+        </div>
+
+        <div class="flex flex-col gap-2">
+          <label for="connectNetwork" class="text-[13px] font-medium text-ink2">Network</label>
+          <select id="connectNetwork"
+            class="w-full h-12 px-3 bg-surface border border-line rounded-xl2 text-[14px] focus:outline-none focus:border-indigo focus:shadow-ring transition">
+            <option value="mainnet">Mainnet — real bitcoin</option>
+            <option value="testnet">Testnet</option>
+            <option value="signet">Signet</option>
+            <option value="regtest">Regtest</option>
+          </select>
+          <p id="connectNetworkNote" class="text-[12px] text-muted">Must match the network your node runs on. Your wallet is derived from this, so it cannot be changed for an existing wallet.</p>
+        </div>
+
+        <p id="connectResult" class="connect-result" hidden></p>
+
+        <button id="connectBtn" class="btn-primary w-full">Connect</button>
+
+        <div class="connect-or"><span>or</span></div>
+
+        <button id="connectDemoBtn" type="button" class="btn-secondary w-full">
+          <span class="material-symbols-outlined text-[18px]" aria-hidden="true">science</span>
+          Explore with the built-in demo
+        </button>
+        <p class="text-[12px] text-muted text-center">Fake offers, fake sellers, no real money and no real bitcoin.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Wallet: balance and sending -->
+  <div id="walletOverlay" class="modal" role="dialog" aria-modal="true" aria-labelledby="walletTitle" aria-hidden="true">
+    <div class="modal-card connect-card">
+      <div class="pay-head">
+        <span class="pay-badge material-symbols-outlined" aria-hidden="true">account_balance_wallet</span>
+        <div>
+          <h2 id="walletTitle" class="text-[19px] font-semibold tracking-tight leading-tight">Your wallet</h2>
+          <p class="text-[13px] text-ink2 mt-0.5">Keys stay on this computer. Balances are read over Tor, so no server is told which addresses are yours.</p>
+        </div>
+      </div>
+
+      <div class="connect-body">
+        <p id="walletModalBalance" class="wallet-modal-balance">—</p>
+
+        <div class="flex flex-col gap-2">
+          <label for="sendAddress" class="text-[13px] font-medium text-ink2">Send to</label>
+          <input id="sendAddress" type="text" spellcheck="false" autocomplete="off" autocapitalize="none"
+            placeholder="bc1…"
+            class="w-full h-12 px-4 bg-surface border border-line rounded-xl2 text-[14px] font-mono placeholder:text-muted focus:outline-none focus:border-indigo focus:shadow-ring transition" />
+        </div>
+
+        <div class="send-row">
+          <div class="flex flex-col gap-2">
+            <label for="sendAmount" class="text-[13px] font-medium text-ink2">Amount (BTC)</label>
+            <input id="sendAmount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00000000"
+              class="w-full h-12 px-4 bg-surface border border-line rounded-xl2 text-[14px] tabular-nums placeholder:text-muted focus:outline-none focus:border-indigo focus:shadow-ring transition" />
+          </div>
+          <div class="flex flex-col gap-2">
+            <label for="sendFee" class="text-[13px] font-medium text-ink2">Fee (sat/vB)</label>
+            <input id="sendFee" type="text" inputmode="numeric" autocomplete="off" placeholder="2"
+              class="w-full h-12 px-4 bg-surface border border-line rounded-xl2 text-[14px] tabular-nums placeholder:text-muted focus:outline-none focus:border-indigo focus:shadow-ring transition" />
+          </div>
+        </div>
+        <p id="sendFeeHint" class="text-[12px] text-muted">We cannot honestly predict how long a fee will take to confirm — this is the lowest rate your peers will relay.</p>
+
+        <p id="sendResult" class="connect-result" hidden></p>
+
+        <!-- Review first. The transaction shown here is the one that gets
+             signed; it is not rebuilt on confirm. -->
+        <button id="sendReviewBtn" type="button" class="btn-secondary w-full">Review the transaction</button>
+        <div id="sendConfirmWrap" hidden class="flex flex-col gap-2">
+          <div id="sendSummary" class="send-summary"></div>
+          <button id="sendConfirmBtn" type="button" class="btn-primary w-full">Send it</button>
+          <button id="sendCancelBtn" type="button" class="wallet-toggle">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Payment screen — the fiat (SEPA) leg -->
   <div id="paymentOverlay" class="modal" role="dialog" aria-modal="true" aria-labelledby="payTitle" aria-hidden="true">

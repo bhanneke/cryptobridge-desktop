@@ -14,6 +14,8 @@
 // Bisq's pairing flow for nodes with authorizationRequired=true.
 
 pub mod proxy;
+pub mod node;
+pub mod wallet;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
@@ -36,7 +38,7 @@ enum SockCmd {
 
 /// Shell-owned network state. The webview holds only opaque socket ids.
 pub struct Net {
-    client: reqwest::Client,
+    client: proxy::Clients,
     sockets: Mutex<HashMap<u32, mpsc::UnboundedSender<SockCmd>>>,
     next_id: AtomicU32,
     /// Slots reserved for sockets that are open *or* mid-handshake. Counting
@@ -47,7 +49,7 @@ pub struct Net {
 impl Net {
     pub fn new() -> Self {
         Self {
-            client: proxy::build_client(),
+            client: proxy::Clients::new(),
             sockets: Mutex::new(HashMap::new()),
             next_id: AtomicU32::new(1),
             reserved: AtomicUsize::new(0),
@@ -202,11 +204,26 @@ async fn pump(app: AppHandle, id: u32, stream: proxy::BisqWs, mut rx: mpsc::Unbo
 pub fn run() {
     tauri::Builder::default()
         .manage(Net::new())
+        .manage(std::sync::Arc::new(wallet::WalletState::new()))
+        .manage(node::NodeState::new())
         .invoke_handler(tauri::generate_handler![
             bisq_http,
             bisq_ws_open,
             bisq_ws_send,
-            bisq_ws_close
+            bisq_ws_close,
+            wallet::wallet_status,
+            wallet::wallet_create,
+            wallet::wallet_reveal_mnemonic,
+            wallet::wallet_confirm_backup,
+            wallet::wallet_next_address,
+            wallet::wallet_start_sync,
+            wallet::wallet_sync_status,
+            wallet::wallet_fee_floor,
+            wallet::wallet_send_preview,
+            wallet::wallet_send_confirm,
+            node::node_status,
+            node::node_start,
+            node::node_stop
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

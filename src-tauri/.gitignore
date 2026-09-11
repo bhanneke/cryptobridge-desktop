@@ -1,0 +1,5 @@
+
+# Staged by build/stage-node.sh: ~145MB of Bisq jars and a jlink'd JRE.
+resources/bisq/
+resources/jre/
+resources/tor/

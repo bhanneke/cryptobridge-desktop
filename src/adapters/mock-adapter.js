@@ -115,6 +115,11 @@ export class MockAdapter extends OnrampAdapter {
     for (const cb of this.tradeSubs.get(tradeId) ?? []) cb(state, { ...trade });
   }
 
+  /** The demo backend starts fresh every launch, so there is never anything
+   *  to resume. Returning [] rather than throwing keeps the resume prompt's
+   *  logic identical in both backends. */
+  async listOpenTrades() { return []; }
+
   subscribeTrade(tradeId, cb) {
     if (!this.tradeSubs.has(tradeId)) this.tradeSubs.set(tradeId, new Set());
     this.tradeSubs.get(tradeId).add(cb);
