@@ -14,6 +14,7 @@
 // Bisq's pairing flow for nodes with authorizationRequired=true.
 
 pub mod proxy;
+pub mod wallet;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
@@ -202,11 +203,17 @@ async fn pump(app: AppHandle, id: u32, stream: proxy::BisqWs, mut rx: mpsc::Unbo
 pub fn run() {
     tauri::Builder::default()
         .manage(Net::new())
+        .manage(wallet::WalletState::new())
         .invoke_handler(tauri::generate_handler![
             bisq_http,
             bisq_ws_open,
             bisq_ws_send,
-            bisq_ws_close
+            bisq_ws_close,
+            wallet::wallet_status,
+            wallet::wallet_create,
+            wallet::wallet_reveal_mnemonic,
+            wallet::wallet_confirm_backup,
+            wallet::wallet_next_address
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

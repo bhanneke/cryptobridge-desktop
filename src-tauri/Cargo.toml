@@ -23,3 +23,9 @@ tokio-tungstenite = { version = "0.30.0", default-features = false, features = [
 url = "2.5.8"
 futures-util = { version = "0.3.33", default-features = false, features = ["std", "sink"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+
+# Built-in wallet. bdk_wallet is the descriptor wallet itself; keyring keeps the
+# recovery phrase in the OS keychain so we never implement encryption ourselves.
+# Neither pulls in a TLS stack -- the no-TLS CI check must stay green.
+bdk_wallet = { version = "3.1", features = ["keys-bip39", "rusqlite"] }
+keyring = "4"
