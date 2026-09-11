@@ -28,7 +28,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, Runtime, State};
 
 /// Where Tor's SOCKS port is expected. Matches the proxy module and Kyoto.
 const TOR_SOCKS: &str = "127.0.0.1:9050";
@@ -127,7 +127,7 @@ fn tor_is_up() -> bool {
         .is_some()
 }
 
-fn node_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+fn node_data_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
@@ -191,8 +191,8 @@ pub fn node_status(state: State<'_, NodeState>) -> NodeStatus {
 /// clearnet node on mainnet, so this cannot be used to quietly trade without
 /// Tor.
 #[tauri::command]
-pub fn node_start(
-    app: AppHandle,
+pub fn node_start<R: Runtime>(
+    app: AppHandle<R>,
     state: State<'_, NodeState>,
     clearnet: Option<bool>,
 ) -> Result<NodeStatus, String> {

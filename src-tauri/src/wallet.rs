@@ -42,7 +42,7 @@ use bdk_wallet::keys::{GeneratableKey, GeneratedKey};
 use bdk_wallet::miniscript::Segwitv0;
 use bdk_wallet::{KeychainKind, Wallet};
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, Runtime, State};
 
 /// Keychain service name. Stable across versions -- changing it orphans every
 /// existing user's recovery phrase.
@@ -165,7 +165,7 @@ fn keyring_entry(network: Network) -> Result<keyring::Entry, String> {
         .map_err(|e| format!("keychain unavailable: {e}"))
 }
 
-fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+fn data_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
@@ -174,11 +174,11 @@ fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn db_path(app: &AppHandle, network: Network) -> Result<PathBuf, String> {
+fn db_path<R: Runtime>(app: &AppHandle<R>, network: Network) -> Result<PathBuf, String> {
     Ok(data_dir(app)?.join(format!("wallet-{network}.sqlite")))
 }
 
-fn backup_marker(app: &AppHandle, network: Network) -> Result<PathBuf, String> {
+fn backup_marker<R: Runtime>(app: &AppHandle<R>, network: Network) -> Result<PathBuf, String> {
     Ok(data_dir(app)?.join(format!("wallet-{network}.backed-up")))
 }
 
@@ -194,7 +194,7 @@ fn backup_marker(app: &AppHandle, network: Network) -> Result<PathBuf, String> {
 /// Stored as "height:hash" in plain text. It is a public fact about the
 /// blockchain, not a secret, and a wrong value costs a rescan rather than
 /// money -- Kyoto validates the header chain regardless.
-fn birthday_path(app: &AppHandle, network: Network) -> Result<PathBuf, String> {
+fn birthday_path<R: Runtime>(app: &AppHandle<R>, network: Network) -> Result<PathBuf, String> {
     Ok(data_dir(app)?.join(format!("wallet-{network}.birthday")))
 }
 
@@ -210,13 +210,12 @@ fn format_birthday(cp: &bdk_kyoto::HashCheckpoint) -> String {
     format!("{}:{}", cp.height, cp.hash)
 }
 
-fn read_birthday(app: &AppHandle, network: Network) -> Option<bdk_kyoto::HashCheckpoint> {
+fn read_birthday<R: Runtime>(app: &AppHandle<R>, network: Network) -> Option<bdk_kyoto::HashCheckpoint> {
     let text = std::fs::read_to_string(birthday_path(app, network).ok()?).ok()?;
     parse_birthday(&text)
 }
 
-fn write_birthday(
-    app: &AppHandle,
+fn write_birthday<R: Runtime>(app: &AppHandle<R>,
     network: Network,
     cp: &bdk_kyoto::HashCheckpoint,
 ) -> Result<(), String> {
@@ -237,8 +236,7 @@ fn descriptors(mnemonic: &Mnemonic, network: Network) -> Result<(String, String)
     ))
 }
 
-fn load_from_mnemonic(
-    app: &AppHandle,
+fn load_from_mnemonic<R: Runtime>(app: &AppHandle<R>,
     mnemonic: &Mnemonic,
     network: Network,
 ) -> Result<Loaded, String> {
@@ -275,8 +273,8 @@ fn load_from_mnemonic(
 
 /// Load the wallet for `network` if one exists. Safe to call on every startup.
 #[tauri::command]
-pub async fn wallet_status(
-    app: AppHandle,
+pub async fn wallet_status<R: Runtime>(
+    app: AppHandle<R>,
     state: State<'_, Arc<WalletState>>,
     network: String,
 ) -> Result<WalletStatus, String> {
@@ -315,8 +313,8 @@ pub async fn wallet_status(
 /// overwriting a recovery phrase is how people lose coins, so it is never
 /// something a stray call can do.
 #[tauri::command]
-pub async fn wallet_create(
-    app: AppHandle,
+pub async fn wallet_create<R: Runtime>(
+    app: AppHandle<R>,
     state: State<'_, Arc<WalletState>>,
     network: String,
 ) -> Result<WalletStatus, String> {
@@ -356,8 +354,8 @@ pub async fn wallet_create(
 /// it is there so the phrase has exactly one moment where it crosses into the
 /// webview, instead of being a button that re-exposes it forever.
 #[tauri::command]
-pub fn wallet_reveal_mnemonic(
-    app: AppHandle,
+pub fn wallet_reveal_mnemonic<R: Runtime>(
+    app: AppHandle<R>,
     network: String,
 ) -> Result<Vec<String>, String> {
     let net = parse_network(&network)?;
@@ -374,8 +372,8 @@ pub fn wallet_reveal_mnemonic(
 
 /// Confirm the user really wrote the phrase down, by typing it back.
 #[tauri::command]
-pub fn wallet_confirm_backup(
-    app: AppHandle,
+pub fn wallet_confirm_backup<R: Runtime>(
+    app: AppHandle<R>,
     network: String,
     words: Vec<String>,
 ) -> Result<(), String> {
@@ -401,8 +399,8 @@ pub fn wallet_confirm_backup(
 /// A fresh receive address. Called once per trade, so every trade lands on a
 /// different address and they cannot be linked on-chain.
 #[tauri::command]
-pub async fn wallet_next_address(
-    app: AppHandle,
+pub async fn wallet_next_address<R: Runtime>(
+    app: AppHandle<R>,
     state: State<'_, Arc<WalletState>>,
     network: String,
 ) -> Result<NewAddress, String> {
@@ -452,8 +450,8 @@ use crate::proxy::TOR_SOCKS;
 /// Begin syncing in the background. Idempotent: calling it twice for the same
 /// network does not start a second node.
 #[tauri::command]
-pub async fn wallet_start_sync(
-    app: AppHandle,
+pub async fn wallet_start_sync<R: Runtime>(
+    app: AppHandle<R>,
     state: State<'_, Arc<WalletState>>,
     network: String,
 ) -> Result<SyncStatus, String> {
@@ -516,9 +514,9 @@ async fn probe_chain_tip(network: Network) -> Result<bdk_kyoto::HashCheckpoint, 
     tip
 }
 
-async fn sync_loop(
+async fn sync_loop<R: Runtime>(
     state: Arc<WalletState>,
-    app: AppHandle,
+    app: AppHandle<R>,
     network: Network,
 ) -> Result<(), String> {
     // Where should filter matching start?
