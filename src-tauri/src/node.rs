@@ -71,14 +71,8 @@ fn find_node_binary<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     // A node shipped with the app wins over anything else on the machine: it
     // is the one we configured and the one we know the version of.
     if let Ok(res) = app.path().resource_dir() {
-        // See tor.rs: the bundler preserves the `resources/` prefix.
-        for bundled in [
-            res.join("resources").join("bisq").join("bin").join("api-app"),
-            res.join("bisq").join("bin").join("api-app"),
-        ] {
-            if is_node_binary(&bundled) {
-                return Some(bundled);
-            }
+        if let Some(found) = node_candidates(&res).into_iter().find(|p| is_node_binary(p)) {
+            return Some(found);
         }
     }
     if let Ok(p) = std::env::var("CRYPTOBRIDGE_BISQ_APP") {
@@ -101,6 +95,20 @@ fn find_node_binary<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     candidates.into_iter().flatten().find(|p| is_node_binary(p))
 }
 
+/// Where a bundled Bisq launcher can be. See tor::tor_candidates for why the
+/// `resources/` prefix matters.
+fn node_candidates(res: &Path) -> Vec<PathBuf> {
+    vec![
+        res.join("resources").join("bisq").join("bin").join("api-app"),
+        res.join("bisq").join("bin").join("api-app"),
+    ]
+}
+
+/// Where a bundled Java runtime can be.
+fn jre_candidates(res: &Path) -> Vec<PathBuf> {
+    vec![res.join("resources").join("jre"), res.join("jre")]
+}
+
 /// Only ever a file named api-app. Narrow on purpose: this is the one place
 /// the app decides what to execute.
 fn is_node_binary(p: &Path) -> bool {
@@ -117,10 +125,11 @@ fn is_node_binary(p: &Path) -> bool {
 /// neither depend on the user having Java nor ship a third of a gigabyte.
 fn find_java_home<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     if let Ok(res) = app.path().resource_dir() {
-        for bundled in [res.join("resources").join("jre"), res.join("jre")] {
-            if bundled.join("bin").join("java").is_file() {
-                return Some(bundled);
-            }
+        if let Some(found) = jre_candidates(&res)
+            .into_iter()
+            .find(|p| p.join("bin").join("java").is_file())
+        {
+            return Some(found);
         }
     }
     if let Ok(p) = std::env::var("JAVA_HOME") {
@@ -307,16 +316,29 @@ mod tests {
 
         std::env::set_var("CRYPTOBRIDGE_BISQ_APP", real);
         std::env::set_var("CRYPTOBRIDGE_JAVA_HOME", jdk);
-        assert_eq!(
-            find_node_binary(handle).as_deref(),
-            Some(real),
-            "did not find the real api-app"
-        );
-        assert_eq!(
-            find_java_home(handle).as_deref(),
-            Some(jdk),
-            "did not find the real JDK"
-        );
+
+        // A bundled node deliberately outranks the override -- it is the
+        // version we configured and tested. In a dev tree with resources
+        // staged, the mock app's resource dir really does contain one, so
+        // only assert the override wins when nothing is bundled. (This
+        // caught the precedence working: the test, not the code, was wrong.)
+        let bundled_present = app
+            .path()
+            .resource_dir()
+            .ok()
+            .map(|res| node_candidates(&res).into_iter().any(|p| is_node_binary(&p)))
+            .unwrap_or(false);
+
+        let found = find_node_binary(handle);
+        assert!(found.is_some(), "found no api-app at all");
+        if !bundled_present {
+            assert_eq!(found.as_deref(), Some(real), "the override was not honoured");
+            assert_eq!(
+                find_java_home(handle).as_deref(),
+                Some(jdk),
+                "did not find the real JDK"
+            );
+        }
 
         // And a bogus override must not be accepted just because it is set.
         std::env::set_var("CRYPTOBRIDGE_BISQ_APP", "/bin/sh");
@@ -327,6 +349,36 @@ mod tests {
         );
         std::env::remove_var("CRYPTOBRIDGE_BISQ_APP");
         std::env::remove_var("CRYPTOBRIDGE_JAVA_HOME");
+    }
+
+    /// The same layout check as tor.rs, for the node and the runtime. Both
+    /// were one level short before a real bundle was inspected.
+    #[test]
+    fn the_bundled_layout_is_the_one_tauri_actually_produces() {
+        let root = std::env::temp_dir().join(format!("cb-bundle-node-{}", std::process::id()));
+        let res = root.join("Contents").join("Resources");
+        let bisq_bin = res.join("resources").join("bisq").join("bin");
+        let jre_bin = res.join("resources").join("jre").join("bin");
+        std::fs::create_dir_all(&bisq_bin).unwrap();
+        std::fs::create_dir_all(&jre_bin).unwrap();
+        std::fs::write(bisq_bin.join("api-app"), b"#!/bin/sh\n").unwrap();
+        std::fs::write(jre_bin.join("java"), b"#!/bin/sh\n").unwrap();
+
+        let node = node_candidates(&res).into_iter().find(|p| is_node_binary(p));
+        assert_eq!(
+            node.as_deref(),
+            Some(bisq_bin.join("api-app").as_path()),
+            "did not find the node where tauri build puts it"
+        );
+        let jre = jre_candidates(&res)
+            .into_iter()
+            .find(|p| p.join("bin").join("java").is_file());
+        assert_eq!(
+            jre.as_deref(),
+            Some(res.join("resources").join("jre").as_path()),
+            "did not find the runtime where tauri build puts it"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// The one place this app decides what to execute. If it ever accepts a

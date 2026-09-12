@@ -59,6 +59,20 @@ pub fn socks_is_up() -> bool {
         .is_some()
 }
 
+/// Where a bundled tor can be, most likely first.
+///
+/// The bundler keeps the staging directory's name: a file staged at
+/// `src-tauri/resources/tor/tor` arrives at `<resource_dir>/resources/tor/tor`,
+/// NOT `<resource_dir>/tor/tor`. Getting this wrong produces an app that
+/// ships Tor and cannot find it, which no test catches and no build fails on
+/// -- so the layout is pinned by a test against a fake bundle.
+fn tor_candidates(res: &Path) -> Vec<PathBuf> {
+    vec![
+        res.join("resources").join("tor").join("tor"),
+        res.join("tor").join("tor"),
+    ]
+}
+
 /// Only ever a file called `tor`. This is the one place we decide what to run.
 fn is_tor_binary(p: &Path) -> bool {
     p.file_name()
@@ -70,17 +84,8 @@ fn is_tor_binary(p: &Path) -> bool {
 fn find_tor<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     // A bundled tor wins: it is the build we tested against.
     if let Ok(res) = app.path().resource_dir() {
-        // The bundler keeps the staging directory's name, so a file staged
-        // at src-tauri/resources/tor/tor arrives at
-        // <resource_dir>/resources/tor/tor -- not <resource_dir>/tor/tor.
-        // Checked against a real build; the shorter path finds nothing.
-        for candidate in [
-            res.join("resources").join("tor").join("tor"),
-            res.join("tor").join("tor"),
-        ] {
-            if is_tor_binary(&candidate) {
-                return Some(candidate);
-            }
+        if let Some(found) = tor_candidates(&res).into_iter().find(|p| is_tor_binary(p)) {
+            return Some(found);
         }
     }
     if let Ok(p) = std::env::var("CRYPTOBRIDGE_TOR") {
@@ -232,6 +237,30 @@ pub fn tor_stop<R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A bundle laid out exactly as `tauri build` produces one.
+    ///
+    /// This pins bug #4 from the Tor work: the bundler keeps the staging
+    /// directory's name, so the binary is at
+    /// `Contents/Resources/resources/tor/tor`. Looking one level short ships
+    /// an app that carries Tor and cannot find it -- nothing fails to compile,
+    /// no test goes red, and the user is simply told Tor is not installed.
+    #[test]
+    fn the_bundled_layout_is_the_one_tauri_actually_produces() {
+        let root = std::env::temp_dir().join(format!("cb-bundle-{}", std::process::id()));
+        let res = root.join("Contents").join("Resources");
+        let real = res.join("resources").join("tor");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("tor"), b"#!/bin/sh\n").unwrap();
+
+        let found = tor_candidates(&res).into_iter().find(|p| is_tor_binary(p));
+        assert_eq!(
+            found.as_deref(),
+            Some(real.join("tor").as_path()),
+            "did not find tor where tauri build puts it"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     /// The one place this module decides what to execute.
     #[test]

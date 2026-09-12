@@ -86,6 +86,10 @@ if [[ "$OS" == "macos" ]]; then
   echo "    signed ${signed} Mach-O files"
 fi
 
+# Same reason as stage-node.sh: read-only staged files break the second and
+# every subsequent build with an unattributed "Permission denied".
+chmod -R u+w "$DEST"
+
 echo "==> verifying the staged binary runs"
 "${DEST}/tor" --version | head -1
 

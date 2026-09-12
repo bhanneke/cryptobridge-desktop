@@ -53,6 +53,14 @@ rm -rf "$DEST/jre"
   --strip-debug --no-header-files --no-man-pages --compress=zip-9 \
   --output "$DEST/jre"
 
+# jlink writes its licence files read-only (mode 444), and Bisq's install
+# tree has read-only files too. tauri-build copies resources into target/ on
+# every build, preserving the mode -- so the FIRST build succeeds and every
+# later one dies overwriting a read-only destination with a bare
+# "Permission denied (os error 13)" that names no file. Cost an hour to find.
+echo "==> making staged files writable so rebuilds can overwrite them"
+chmod -R u+w "$DEST/bisq" "$DEST/jre"
+
 echo "==> verifying the staged runtime actually runs"
 "$DEST/jre/bin/java" -version
 

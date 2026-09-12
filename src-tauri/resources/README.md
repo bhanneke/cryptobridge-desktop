@@ -25,6 +25,20 @@ not `<resource_dir>/tor/tor`. The discovery code in `src/tor.rs` and
 directories and produced a bundle that looked fine and shipped nothing. The
 config uses `resources/**/*`.
 
+## Read-only staged files break every build after the first
+
+`jlink` writes its licence files mode 444, and Bisq's install tree has
+read-only files too. `tauri-build` copies this directory into `target/` on
+every build and `cp` preserves the mode, so the **first** build succeeds and
+every later one fails overwriting a read-only destination with:
+
+    Permission denied (os error 13)
+
+— naming no file, after a wall of `rerun-if-changed` lines. `tauri build`
+appeared to work while `cargo clippy` and `cargo test` failed, which sends you
+looking in entirely the wrong place. Both staging scripts now `chmod -R u+w`
+what they stage.
+
 ## macOS signing
 
 The Tor expert bundle ships unsigned, and Apple Silicon SIGKILLs unsigned
