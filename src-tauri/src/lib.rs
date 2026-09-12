@@ -15,6 +15,7 @@
 
 pub mod proxy;
 pub mod node;
+pub mod tor;
 pub mod wallet;
 
 use std::collections::HashMap;
@@ -206,6 +207,7 @@ pub fn run() {
         .manage(Net::new())
         .manage(std::sync::Arc::new(wallet::WalletState::new()))
         .manage(node::NodeState::new())
+        .manage(tor::TorState::new())
         .invoke_handler(tauri::generate_handler![
             bisq_http,
             bisq_ws_open,
@@ -223,7 +225,10 @@ pub fn run() {
             wallet::wallet_send_confirm,
             node::node_status,
             node::node_start,
-            node::node_stop
+            node::node_stop,
+            tor::tor_status,
+            tor::tor_start,
+            tor::tor_stop
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
