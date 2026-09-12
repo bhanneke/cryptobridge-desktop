@@ -420,6 +420,17 @@
             </button>
             <button id="nodeStopBtn" type="button" class="wallet-toggle" hidden>Stop the node</button>
           </div>
+
+          <!-- Tor is its own line: without it the wallet has no balance at
+               all, which is a different problem from the node being down. -->
+          <p id="torDetail" class="node-detail"></p>
+          <div class="node-actions">
+            <button id="torStartBtn" type="button" class="btn-secondary" hidden>
+              <span class="material-symbols-outlined text-[18px]" aria-hidden="true">shield</span>
+              Start Tor
+            </button>
+            <button id="torStopBtn" type="button" class="wallet-toggle" hidden>Stop Tor</button>
+          </div>
         </div>
 
         <div class="flex flex-col gap-2">

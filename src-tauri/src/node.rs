@@ -21,17 +21,12 @@
 // are already running in. JS can ask us to start "the node"; it cannot say
 // which file that is.
 
-use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Runtime, State};
-
-/// Where Tor's SOCKS port is expected. Matches the proxy module and Kyoto.
-const TOR_SOCKS: &str = "127.0.0.1:9050";
 
 /// The loopback port we ask the node to serve its API on.
 const API_PORT: u16 = 8090;
@@ -76,9 +71,14 @@ fn find_node_binary<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     // A node shipped with the app wins over anything else on the machine: it
     // is the one we configured and the one we know the version of.
     if let Ok(res) = app.path().resource_dir() {
-        let bundled = res.join("bisq").join("bin").join("api-app");
-        if is_node_binary(&bundled) {
-            return Some(bundled);
+        // See tor.rs: the bundler preserves the `resources/` prefix.
+        for bundled in [
+            res.join("resources").join("bisq").join("bin").join("api-app"),
+            res.join("bisq").join("bin").join("api-app"),
+        ] {
+            if is_node_binary(&bundled) {
+                return Some(bundled);
+            }
         }
     }
     if let Ok(p) = std::env::var("CRYPTOBRIDGE_BISQ_APP") {
@@ -117,9 +117,10 @@ fn is_node_binary(p: &Path) -> bool {
 /// neither depend on the user having Java nor ship a third of a gigabyte.
 fn find_java_home<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     if let Ok(res) = app.path().resource_dir() {
-        let bundled = res.join("jre");
-        if bundled.join("bin").join("java").is_file() {
-            return Some(bundled);
+        for bundled in [res.join("resources").join("jre"), res.join("jre")] {
+            if bundled.join("bin").join("java").is_file() {
+                return Some(bundled);
+            }
         }
     }
     if let Ok(p) = std::env::var("JAVA_HOME") {
@@ -135,14 +136,6 @@ fn find_java_home<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
         }
     }
     None
-}
-
-fn tor_is_up() -> bool {
-    TOR_SOCKS
-        .parse::<SocketAddr>()
-        .ok()
-        .and_then(|a| TcpStream::connect_timeout(&a, Duration::from_millis(400)).ok())
-        .is_some()
 }
 
 fn node_data_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
@@ -161,7 +154,7 @@ fn node_data_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
 pub fn node_status<R: Runtime>(app: AppHandle<R>, state: State<'_, NodeState>) -> NodeStatus {
     let binary = find_node_binary(&app);
     let java = find_java_home(&app);
-    let tor = tor_is_up();
+    let tor = crate::tor::socks_is_up();
 
     // reap: a child that exited should not still read as running
     let mut running = false;
@@ -185,7 +178,10 @@ pub fn node_status<R: Runtime>(app: AppHandle<R>, state: State<'_, NodeState>) -
     } else if java.is_none() {
         "Bisq is installed but no Java runtime was found to run it with. Set JAVA_HOME.".into()
     } else if !tor {
-        format!("Tor is not running. The node can start without it, but your wallet balance cannot be checked and trade peers would see your IP. Expected a SOCKS proxy at {TOR_SOCKS}.")
+        format!(
+            "Tor is not running. The node can start without it, but your wallet balance cannot be checked and trade peers would see your IP. Expected a SOCKS proxy at {}.",
+            crate::tor::SOCKS_ADDR
+        )
     } else {
         String::new()
     };

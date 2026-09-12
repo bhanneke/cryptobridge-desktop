@@ -309,6 +309,51 @@ async function refreshNode() {
   $('#nodeStartBtn').hidden = st.running || !st.installed || !st.java;
   $('#nodeStopBtn').hidden = !st.running;
   if (st.api_url && !$('#connectUrl').value) $('#connectUrl').value = st.api_url;
+  refreshTor();
+}
+
+/* Tor gets its own line. "No node" and "no Tor" are different problems with
+ * different fixes, and without Tor the wallet has no balance at all. */
+async function refreshTor() {
+  const el = $('#torDetail');
+  if (!tauriApi()) { el.hidden = true; return; }
+  let st;
+  try { st = await tauriApi().invoke('tor_status'); }
+  catch { el.hidden = true; return; }
+  el.hidden = false;
+  if (st.socks_ready) {
+    el.dataset.kind = 'ok';
+    el.textContent = st.ours
+      ? `Tor is running (started by this app, pid ${st.pid}).`
+      : 'Tor is already running on this computer.';
+  } else {
+    el.dataset.kind = '';
+    el.textContent = st.detail;
+  }
+  $('#torStartBtn').hidden = st.socks_ready || !st.installed;
+  $('#torStopBtn').hidden = !st.ours;
+}
+
+async function onTorStart() {
+  const btn = $('#torStartBtn');
+  btn.disabled = true;
+  connectResult('', 'Starting Tor — building a circuit takes a few seconds…');
+  try {
+    const st = await tauriApi().invoke('tor_start');
+    connectResult(st.socks_ready ? 'ok' : 'warn',
+      st.socks_ready ? 'Tor is up.' : 'Tor did not come up in time. Check its log and try again.');
+  } catch (e) {
+    connectResult('error', e?.message || String(e));
+  } finally {
+    btn.disabled = false;
+    refreshTor();
+  }
+}
+
+async function onTorStop() {
+  try { await tauriApi().invoke('tor_stop'); }
+  catch (e) { connectResult('error', e?.message || String(e)); }
+  refreshTor();
 }
 
 async function onNodeStart() {
@@ -886,6 +931,8 @@ function bindAmountStep() {
   $('#connectBtn').addEventListener('click', onConnect);
   $('#nodeStartBtn').addEventListener('click', onNodeStart);
   $('#nodeStopBtn').addEventListener('click', onNodeStop);
+  $('#torStartBtn').addEventListener('click', onTorStart);
+  $('#torStopBtn').addEventListener('click', onTorStop);
   $('#connectDemoBtn').addEventListener('click', onUseDemo);
   $('#connectOverlay').addEventListener('click', (e) => {
     // Click the backdrop to dismiss — but only once a backend is chosen, so
