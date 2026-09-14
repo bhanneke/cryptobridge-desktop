@@ -24,6 +24,8 @@ jobs:
         run: npm test
       - name: E2E (mock flow, system Chrome)
         run: npm run test:e2e
+      - name: Recovery and privacy UI regressions
+        run: npm run test:recovery-ui
 
   # Nothing else here builds the thing a user actually receives. Without this
   # the packaged app can break -- a bad CSP, an asset path that only resolves
@@ -81,9 +83,18 @@ jobs:
       # These are the app's only hole in the CSP sandbox — they gate merges.
       - name: Proxy tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
-      # The proxy is meant to have no TLS backend at all: with only http:// and
-      # ws:// reachable, it cannot be turned into an exfiltration channel. Fail
-      # the build if a dependency ever pulls one in.
+      - name: Bitcoin Core regtest (receive, send, restart, change)
+        run: |
+          mkdir -p "$RUNNER_TEMP/bitcoin-regtest"
+          cd "$RUNNER_TEMP/bitcoin-regtest"
+          curl --fail --location --remote-name https://bitcoincore.org/bin/bitcoin-core-31.1/bitcoin-31.1-x86_64-linux-gnu.tar.gz
+          curl --fail --location --remote-name https://bitcoincore.org/bin/bitcoin-core-31.1/SHA256SUMS
+          sha256sum --ignore-missing --check SHA256SUMS
+          tar -xzf bitcoin-31.1-x86_64-linux-gnu.tar.gz
+          cd "$GITHUB_WORKSPACE"
+          BITCOIN_BIN_DIR="$RUNNER_TEMP/bitcoin-regtest/bitcoin-31.1/bin" cargo test --locked --manifest-path src-tauri/Cargo.toml real_regtest_receive_send_restart_and_rescan -- --ignored --nocapture
+      # Keep the intended dependency surface. Endpoint allowlisting and Tor
+      # routing are separate controls; absence of TLS cannot prevent exfiltration.
       - name: Assert no TLS backend crept into the dependency tree
         run: |
           if cargo tree --manifest-path src-tauri/Cargo.toml -e normal \

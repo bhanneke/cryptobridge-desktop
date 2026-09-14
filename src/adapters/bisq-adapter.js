@@ -20,6 +20,7 @@
  *    the flag to drive an unattended trade to COMPLETE.
  */
 
+import { nodeKey } from './storage.js';
 import { privacyVerdict } from './tor-status.js';
 import { OnrampAdapter, TradeState } from './onramp-adapter.js';
 import { epcPayload, parseSepaAccountData } from './epc.js';
@@ -127,11 +128,21 @@ export class BisqAdapter extends OnrampAdapter {
     clientName = 'CryptoBridge Desktop',
     onCredentials,
     transport,
+    credentialStore,
+    tradeStore,
   } = {}) {
     super();
     if (!wallet) throw new Error('BisqAdapter requires a wallet (see src/adapters/wallet.js)');
-    this.rest = restBaseUrl.replace(/\/$/, '');
-    this.wsUrl = wsUrl;
+    this.rest = nodeKey(restBaseUrl);
+    this.wsUrl = new URL(wsUrl).href;
+    if (this.wsUrl !== wsUrlForRestBase(this.rest)) throw new Error('The WebSocket must belong to the same Bisq node as the REST endpoint.');
+    this.credentialStore = credentialStore;
+    this.tradeStore = tradeStore;
+    this.intent = null;
+    this.restored = false;
+    this.takeInFlight = false;
+    this.socketGeneration = 0;
+    this.renewing = null;
     this.transport = transport ?? pickTransport();
     this.wallet = wallet;
     this.network = network;
@@ -244,7 +255,7 @@ export class BisqAdapter extends OnrampAdapter {
 
     const d = res.data ?? {};
     if (!d.clientId || !d.clientSecret || !d.sessionId) {
-      throw new Error(`pairing response missing credentials: ${JSON.stringify(d)}`);
+      throw new Error('pairing response missing credentials');
     }
     this.credentials = { clientId: d.clientId, clientSecret: d.clientSecret };
     this.sessionId = d.sessionId;
@@ -252,8 +263,8 @@ export class BisqAdapter extends OnrampAdapter {
     // The code is now spent; drop it so a reconnect cannot try to reuse it.
     this.pairingCode = null;
 
-    try { await this.onCredentials?.(this.credentials); }
-    catch (e) { console.error('storing Bisq credentials failed', e); }
+    await this.credentialStore?.save(this.rest, this.credentials);
+    await this.onCredentials?.(this.credentials);
 
     return {
       clientId: d.clientId,
@@ -264,6 +275,11 @@ export class BisqAdapter extends OnrampAdapter {
 
   /** Trade the durable credentials for a fresh short-lived session. */
   async _renewSession() {
+    if (!this.renewing) this.renewing = this._renewSessionOnce().finally(() => { this.renewing = null; });
+    return this.renewing;
+  }
+
+  async _renewSessionOnce() {
     if (!this.credentials) throw new Error('no credentials to renew a session with — pair first');
     const res = await this._req('POST', '/access/session', {
       clientId: this.credentials.clientId,
@@ -311,6 +327,8 @@ export class BisqAdapter extends OnrampAdapter {
   // --- lifecycle -------------------------------------------------------------
   async init() {
     this._setStatus('connecting');
+    this._restore();
+    if (this.credentialStore) this.credentials = await this.credentialStore.load(this.rest);
     // Authenticate first if this node wants it: every call below, and the
     // WebSocket handshake, need the session headers.
     if (this.pairingCode || this.credentials) await this._authenticate();
@@ -327,6 +345,7 @@ export class BisqAdapter extends OnrampAdapter {
       });
       this.identityId = created.data?.userProfile?.id ?? created.data?.userProfile?.nym ?? null;
     }
+    await this.checkPrivacy();
     await this._openWs();
   }
 
@@ -358,6 +377,36 @@ export class BisqAdapter extends OnrampAdapter {
     return privacyVerdict(profile, this.network);
   }
 
+  async checkPrivacy() {
+    const verdict = await this.getPrivacyStatus();
+    this.privacy = verdict;
+    if (verdict.level === 'block') {
+      this._setStatus('error');
+      throw new Error(`${verdict.headline}. ${verdict.detail}`);
+    }
+    return verdict;
+  }
+
+  _restore() {
+    if (this.restored) return;
+    const saved = this.tradeStore?.load();
+    if (saved) {
+      this.intent = saved.intent ?? null;
+      for (const trade of saved.trades) {
+        this.trades.set(trade.id, trade);
+        if (trade.state) this.lastEmitted.set(trade.id, trade.state);
+        if (trade.props) this.tradeProps.set(trade.id, trade.props);
+        if (trade.receiveAddress) this.pendingBtcAddress.set(trade.id, trade.receiveAddress);
+        if (trade.receiptConfirmed) this.btcReceiptSent.add(trade.id);
+      }
+    }
+    this.restored = true;
+  }
+
+  _persist() {
+    this.tradeStore?.save({ trades: [...this.trades.values()], intent: this.intent });
+  }
+
   _setStatus(status) {
     this.status = status;
     const info = this.getBackendInfo();
@@ -381,11 +430,13 @@ export class BisqAdapter extends OnrampAdapter {
     const out = [];
     for (const wrapper of raw) {
       const o = wrapper.bisqEasyOffer ?? wrapper;
+      if (!o?.quoteSidePaymentMethodSpecs?.some(s => s.paymentMethod === 'SEPA')
+          || !o?.baseSidePaymentMethodSpecs?.some(s => s.paymentMethod === 'MAIN_CHAIN')) continue;
       if (o?.direction !== 'SELL') continue;             // we BUY BTC → take SELL offers
       const priced = this._priceOffer(o);
       if (priced.priceEurPerBtc == null) continue;       // can't price it safely → hide it
       const { minEur, maxEur } = this._amountRange(o);
-      const paymentMethod = o.quoteSidePaymentMethodSpecs?.[0]?.paymentMethod ?? 'SEPA';
+      const paymentMethod = 'SEPA';
       const offer = {
         id: o.id,
         maker: wrapper.userProfile?.nickName ?? 'unknown',
@@ -446,7 +497,16 @@ export class BisqAdapter extends OnrampAdapter {
   }
 
   // --- taking a trade --------------------------------------------------------
-  async takeOffer(offerId, { fiatAmountEur }) {
+  async takeOffer(offerId, args) {
+    this._restore();
+    if (this.storageError) throw this.storageError;
+    if (this.takeInFlight || this.intent) throw new Error('A trade request is still unresolved. Reconnect and check the existing trade in Bisq before starting another.');
+    this.takeInFlight = true;
+    try { return await this._takeOffer(offerId, args); }
+    finally { this.takeInFlight = false; }
+  }
+
+  async _takeOffer(offerId, { fiatAmountEur }) {
     if (!(fiatAmountEur > 0)) throw new Error('fiatAmountEur must be > 0');
     let offer = this.offerCache.get(offerId);
     if (!offer) { await this.listOffers({ fiat: 'EUR' }); offer = this.offerCache.get(offerId); }
@@ -455,28 +515,42 @@ export class BisqAdapter extends OnrampAdapter {
       throw new Error(`amount €${fiatAmountEur} outside offer range €${offer.minEur}–€${offer.maxEur}`);
     }
 
+    const address = await this.wallet.getReceiveAddress();
+    await this.checkPrivacy();
+    if (this.closing) throw new Error('The node changed before this trade was created.');
     const quoteSideAmount = Math.round(fiatAmountEur * 1e4);            // EUR × 10^4
     const baseSideAmount = Math.round((fiatAmountEur / offer.priceEurPerBtc) * 1e8); // sats
-    const res = await this._req('POST', '/trades', {
+    this.intent = { offerId, fiatAmountEur, btcAmountSats: baseSideAmount, receiveAddress: address, createdAt: Date.now() };
+    try { this._persist(); } catch (e) { this.intent = null; throw e; }
+    let res;
+    try { res = await this._req('POST', '/trades', {
       offerId,
       baseSideAmount,
       quoteSideAmount,
       bitcoinPaymentMethod: 'MAIN_CHAIN',
       fiatPaymentMethod: 'SEPA',
-    });
+    }, { retryOnAuthFailure: false }); } catch (e) {
+      // A timeout, 5xx or lost response may follow a successful creation.
+      // Never retry this POST automatically or clear its durable intent.
+      throw new Error(`Trade outcome is uncertain. Check this node in Bisq before starting another purchase. ${e.message}`);
+    }
     const tradeId = res.data?.tradeId;
     if (!tradeId) throw new Error(`POST /trades returned no tradeId: ${JSON.stringify(res.data)}`);
 
     const trade = {
       id: tradeId, offerId, state: TradeState.OFFER_TAKEN,
-      fiatAmountEur, btcAmountSats: baseSideAmount,
+      fiatAmountEur, btcAmountSats: baseSideAmount, receiveAddress: address,
     };
     this.trades.set(tradeId, trade);
+    this.intent = null;
+    try { this._persist(); } catch (e) {
+      this.intent = { ...trade, tradeId };
+      throw new Error(`Trade ${tradeId} exists, but could not be saved. Resume this trade in Bisq; do not take another offer. ${e.message}`);
+    }
 
     // Fetch the receive address now (fixes which address the coins go to) and
     // send it as soon as the take-offer response arrives (the WS handler fires
     // the actual PATCH once the phase allows).
-    const address = await this.wallet.getReceiveAddress();
     this.pendingBtcAddress.set(tradeId, address);
     // If the response already arrived (fast local node), try immediately.
     this._maybeSendBtcAddress(tradeId);
@@ -503,6 +577,7 @@ export class BisqAdapter extends OnrampAdapter {
     this.lastEmitted.set(tradeId, state);
     const t = this.trades.get(tradeId);
     if (t) t.state = state;
+    try { this._persist(); } catch (e) { this.storageError = e; this._setStatus('error'); }
     for (const cb of this.tradeSubs.get(tradeId) ?? []) {
       try { cb(state, this._tradeSnapshot(tradeId)); } catch { /* subscriber error */ }
     }
@@ -512,7 +587,7 @@ export class BisqAdapter extends OnrampAdapter {
   async getPaymentInstructions(tradeId) {
     const props = this.tradeProps.get(tradeId);
     const trade = this.trades.get(tradeId);
-    if (!trade) throw new Error(`unknown trade: ${tradeId}`);
+    if (!trade) throw new Error(`Trade ${tradeId} has no saved details. Open it in Bisq to verify the amount.`);
     if (!props?.paymentAccountData) {
       throw new Error(`seller account data not received yet for ${tradeId} (wait for AWAITING_FIAT_PAYMENT)`);
     }
@@ -520,14 +595,21 @@ export class BisqAdapter extends OnrampAdapter {
     // Bisq Easy discourages payment references (they can flag the transfer); the
     // seller matches by amount/timing. Leave the reference empty by default.
     const reference = '';
+    const paymentSent = !!trade.fiatPaymentSent;
+    const validAmount = Number.isFinite(trade.fiatAmountEur) && trade.fiatAmountEur > 0;
+    const verificationError = !parsed.ok ? 'The seller’s bank details failed validation. Ask the seller to correct them in Bisq before paying.'
+      : !validAmount ? 'The amount is missing from this older trade. Verify and complete the payment in Bisq.'
+      : trade.addressConflict ? 'The node reports a different receive address. Resolve this trade in Bisq before paying.' : null;
     return {
+      verificationError,
+      paymentSent,
       receiverName: parsed.holderName,
       iban: parsed.iban,
       bic: parsed.bic,
       reference,
       amountEur: trade.fiatAmountEur,
       rawAccountData: parsed.raw,          // always show the seller's exact text
-      epcQrPayload: epcPayload({
+      epcQrPayload: verificationError || paymentSent ? null : epcPayload({
         receiverName: parsed.holderName, iban: parsed.iban, bic: parsed.bic,
         amountEur: trade.fiatAmountEur, reference,
       }),
@@ -536,9 +618,12 @@ export class BisqAdapter extends OnrampAdapter {
 
   async confirmFiatSent(tradeId) {
     const state = this.lastEmitted.get(tradeId);
+    if ([TradeState.FIAT_SENT, TradeState.FIAT_RECEIVED, TradeState.BTC_RELEASED, TradeState.COMPLETE].includes(state)) return;
     if (state !== TradeState.AWAITING_FIAT_PAYMENT) {
       throw new Error(`cannot confirm fiat sent from state ${state ?? 'unknown'}`);
     }
+    const trade = this.trades.get(tradeId);
+    if (trade) { trade.fiatPaymentSent = true; this._persist(); }
     await this._tradeEvent(tradeId, 'BUYER_CONFIRM_FIAT_SENT');
   }
 
@@ -554,14 +639,18 @@ export class BisqAdapter extends OnrampAdapter {
   async confirmBtcReceived(tradeId) {
     if (this.btcReceiptSent.has(tradeId)) return;
     this.btcReceiptSent.add(tradeId);
+    const trade = this.trades.get(tradeId);
     try {
-      await this._tradeEvent(tradeId, 'BTC_CONFIRMED');
+      if (!/BTC_CONFIRMED/.test(this.tradeProps.get(tradeId)?.tradeState ?? '')) await this._tradeEvent(tradeId, 'BTC_CONFIRMED');
       await this._tradeEvent(tradeId, 'CLOSE_TRADE');
+      if (trade) trade.receiptConfirmed = true;
+      this._persist();
+      this._emitTrade(tradeId, TradeState.COMPLETE);
     } catch (e) {
-      this.btcReceiptSent.delete(tradeId);   // let the user retry
+      this.btcReceiptSent.delete(tradeId);
+      if (trade) trade.receiptConfirmed = false;
       throw e;
     }
-    this._emitTrade(tradeId, TradeState.COMPLETE);
   }
 
   // --- wallet (delegated to the seam) ---------------------------------------
@@ -581,39 +670,39 @@ export class BisqAdapter extends OnrampAdapter {
   /** Resolves once subscribed, or after scheduling a retry — never rejects, so
    *  init() stays usable against a node that is not up yet. */
   async _openWs() {
+    if (this.wsOpening || this.closing) return;
     this.wsOpening = true;
-    let sock;
+    const generation = ++this.socketGeneration;
+    const current = () => generation === this.socketGeneration && !this.closing;
+    let closed = false;
+    this.lastSeq.clear();
+    this.tradeSnapshotSeen = false;
     try {
-      sock = await this.transport.openSocket(this.wsUrl, {
-        // Bisq authenticates the WebSocket on the *handshake headers* — there
-        // is no query-string fallback — so an authenticated node is only
-        // reachable through a transport that can set them (the Rust shell).
+      // Renewal is shared with HTTP callers; an idle trade gets a fresh
+      // session even when no REST request happens after the socket closes.
+      if (this.credentials) await this._renewSession();
+      await this.checkPrivacy();
+      const sock = await this.transport.openSocket(this.wsUrl, {
         headers: this._authHeaders(),
-        onMessage: (raw) => this._onWsFrame(raw),
-        onError: () => this._setStatus('error'),
+        onMessage: raw => { if (current()) this._onWsFrame(raw); },
+        onError: () => { if (current()) this._setStatus('error'); },
         onClose: () => {
+          closed = true;
+          if (!current()) return;
           this.ws = null;
-          if (this.closing) return;
           this._setStatus('connecting');
           this._scheduleReconnect();
         },
       });
+      if (!current() || closed) { sock.close(); return; }
+      this.ws = sock;
+      this.reconnectAttempts = 0;
+      sock.send(JSON.stringify({ type: 'SubscriptionRequest', requestId: 'sub-trades', topic: 'TRADES', parameter: null }));
+      sock.send(JSON.stringify({ type: 'SubscriptionRequest', requestId: WS_SUB_ID, topic: 'TRADE_PROPERTIES', parameter: null }));
+      this._setStatus('connected');
     } catch {
-      this.wsOpening = false;
-      this._setStatus('error');
-      if (!this.closing) this._scheduleReconnect();
-      return;
-    }
-    this.wsOpening = false;
-
-    if (this.closing) { sock.close(); return; }   // closed while the handshake ran
-    this.ws = sock;
-    this.reconnectAttempts = 0;
-    // The "type" discriminator is REQUIRED — without it the server silently
-    // drops the subscription ("No service found").
-    sock.send(JSON.stringify({ type: 'SubscriptionRequest', requestId: 'sub-trades', topic: 'TRADES', parameter: null }));
-    sock.send(JSON.stringify({ type: 'SubscriptionRequest', requestId: WS_SUB_ID, topic: 'TRADE_PROPERTIES', parameter: null }));
-    this._setStatus('connected');
+      if (current()) { this._setStatus('error'); this._scheduleReconnect(); }
+    } finally { this.wsOpening = false; }
   }
 
   _scheduleReconnect() {
@@ -621,7 +710,8 @@ export class BisqAdapter extends OnrampAdapter {
     const delay = Math.min(30000, 1000 * 2 ** this.reconnectAttempts++);
     // `wsOpening` guards the window where a handshake is in flight but `ws` is
     // not yet set, which would otherwise let a retry open a second socket.
-    setTimeout(() => {
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = setTimeout(() => {
       if (!this.closing && !this.ws && !this.wsOpening) this._openWs();
     }, delay);
   }
@@ -685,29 +775,18 @@ export class BisqAdapter extends OnrampAdapter {
    *  have. */
   async listOpenTrades() {
     await this._waitForTradeSnapshot();
+    this._restore();
     const out = [];
-    for (const [id, props] of this.tradeProps.entries()) {
-      const raw = props?.tradeState;
-      if (!raw) continue;
-      if (isTerminalBisqState(raw)) continue;
-      /* Deliberately NOT `if (!mapBisqState(raw)) continue`. Bisq's state
-       * strings are compound and there are more of them than we map -- the
-       * one that exposed this bug was
-       * TAKER_RECEIVED_TAKE_OFFER_RESPONSE__BUYER_SENT_BTC_ADDRESS__BUYER_DID_NOT_RECEIVED_ACCOUNT_DATA,
-       * which mapped to null and made the trade vanish from this list.
-       *
-       * Dropping a trade we cannot label is the worst possible failure here:
-       * the user may already have sent the money, and the app would show them
-       * nothing at all. An unmapped state is listed with state null, and the
-       * UI says "in progress" rather than inventing a step. */
-      const state = mapBisqState(raw);
-      out.push({
-        id,
-        state,
-        rawState: raw,
-        sellerDetails: props.paymentAccountData ?? null,
-        receiveAddress: props.bitcoinPaymentData ?? null,
-      });
+    for (const id of new Set([...this.tradeProps.keys(), ...this.trades.keys()])) {
+      const props = this.tradeProps.get(id) ?? {};
+      const trade = this.trades.get(id) ?? {};
+      const raw = props.tradeState;
+      if (!raw && !trade.id) continue;
+      let state = this.lastEmitted.get(id) ?? (raw ? mapBisqState(raw) : trade.state);
+      if (state === TradeState.COMPLETE && !this.autoConfirmBtcReceipt && !this.btcReceiptSent.has(id)) state = TradeState.BTC_RELEASED;
+      if (state === TradeState.COMPLETE || state === TradeState.FAILED) continue;
+      out.push({ ...trade, id, state, rawState: raw, sellerDetails: props.paymentAccountData ?? null,
+        receiveAddress: trade.receiveAddress ?? props.bitcoinPaymentData ?? null });
     }
     return out;
   }
@@ -728,6 +807,15 @@ export class BisqAdapter extends OnrampAdapter {
     const props = this.tradeProps.get(tradeId) ?? {};
     Object.assign(props, delta);                       // frames are deltas → accumulate
     this.tradeProps.set(tradeId, props);
+    let trade = this.trades.get(tradeId);
+    if (!trade) { trade = { id: tradeId }; this.trades.set(tradeId, trade); }
+    trade.props = props;
+    if (props.bitcoinPaymentData) {
+      trade.addressConflict = !!(trade.receiveAddress && trade.receiveAddress !== props.bitcoinPaymentData);
+      if (!trade.receiveAddress) trade.receiveAddress = props.bitcoinPaymentData;
+      if (!trade.addressConflict) this.btcAddressSent.add(tradeId);
+    }
+    try { this._persist(); } catch (e) { this.storageError = e; this._setStatus('error'); }
 
     if (delta.tradeState) {
       const mapped = mapBisqState(delta.tradeState);
@@ -765,6 +853,8 @@ export class BisqAdapter extends OnrampAdapter {
 
   async close() {
     this.closing = true;
+    ++this.socketGeneration;
+    clearTimeout(this.reconnectTimer);
     try { this.ws?.close(); } catch { /* already closing */ }
     this.ws = null;
     this.statusSubs.clear();

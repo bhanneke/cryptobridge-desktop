@@ -24,6 +24,7 @@ import { BuiltinWallet } from './adapters/builtin-wallet.js';
 import { btcToSats } from './adapters/amount.js';
 import { tauriApi, pickTransport } from './adapters/transport.js';
 import { normaliseNodeUrl, probeNode } from './adapters/node-probe.js';
+import { credentialStore, tradeStore } from './adapters/storage.js';
 import { qrSvg } from './vendor/qr.js';
 
 // ---------------------------------------------------------------
@@ -68,6 +69,8 @@ function setting(q, key) {
   }
 }
 
+const credentialsVault = credentialStore(tauriApi());
+
 function createAdapter() {
   const q = new URLSearchParams(location.search);
   if (setting(q, 'backend') === 'bisq') {
@@ -96,37 +99,24 @@ function createAdapter() {
         withdraw: (addr, sats) =>
           (state.walletMode === 'builtin' && builtinWallet ? builtinWallet : typedWallet).withdraw(addr, sats),
       };
-      // Authenticated nodes (authorizationRequired=true): paste the pairing QR
-      // payload once as `cryptobridge.pairing`. It is spent immediately and
-      // replaced by the credentials the node issues.
-      //
-      // Those credentials live in localStorage for now, which is honest but not
-      // ideal — they are readable by any script that runs in this webview. The
-      // audit found no XSS path today, and the alternative is re-pairing on
-      // every launch; moving them into the Rust shell (so the webview never
-      // holds the secret at all) is the follow-up. See docs/PAIRING_AUTH.md.
-      let credentials = null;
-      try {
-        const stored = localStorage.getItem('cryptobridge.credentials');
-        if (stored) credentials = JSON.parse(stored);
-      } catch { /* absent or unreadable — pair again */ }
-
+      const node = setting(q, 'node') || 'http://127.0.0.1:8090/api/v1';
       return new BisqAdapter({
-        restBaseUrl: setting(q, 'node') || undefined,
+        restBaseUrl: node,
         wsUrl: setting(q, 'ws') || undefined,
         network,
         wallet,
         pairingCode: setting(q, 'pairing') || undefined,
-        credentials,
-        onCredentials: (c) => {
-          try {
-            localStorage.setItem('cryptobridge.credentials', JSON.stringify(c));
-            localStorage.removeItem('cryptobridge.pairing');   // single-use, now spent
-          } catch { /* storage denied: this session stays paired, the next re-pairs */ }
-        },
+        credentialStore: credentialsVault,
+        tradeStore: tradeStore(node, network),
+        onCredentials: () => { localStorage.removeItem('cryptobridge.pairing'); },
       });
     } catch (err) {
-      console.error('bisq backend not usable, falling back to mock:', err.message);
+      // Keep a configuration failure visible; a live wallet must never become
+      // a demo wallet because its node URL or storage could not be read.
+      return { getBackendInfo: () => ({ backend: 'bisq', network: setting(q, 'network') || 'mainnet' }),
+        subscribeStatus: cb => { cb({ status: 'error', backend: 'bisq' }); return () => {}; },
+        init: async () => { throw err; }, close: async () => {},
+        listOffers: async () => { throw err; } };
     }
   }
   return new MockAdapter({ latencyScale: reducedMotion() ? 0.2 : 1 });
@@ -160,14 +150,25 @@ if (builtinWallet) state.walletMode = 'builtin';
 /** Swap in a backend chosen on the connect screen, without a reload. The
  *  wallet is rebuilt too, because it takes its chain from the adapter. */
 async function rebuildBackend() {
+  clearInterval(walletSyncTimer);
+  walletSyncTimer = null;
+  walletSyncStarted = false;
+  sendToken = null;
+  $('#walletWords').replaceChildren();
+  hidePayment();
   try { await adapter.close?.(); } catch { /* already gone */ }
   adapter = createAdapter();
   builtinWallet = makeBuiltinWallet();
   state.walletMode = builtinWallet ? 'builtin' : 'external';
   state.walletStatus = null;
+  state.trade = null;
+  state.resumable = null;
+  state.receiveAddress = '';
+  $('#resumeBanner').hidden = true;
   state.offers = [];
   state.selectedOffer = null;
   bindBackendStatus();
+  adapterReady?.then(checkForOpenTrades).catch(() => {});
   setStep(1);
 }
 
@@ -222,6 +223,7 @@ function renderRows(el, rows) {
 // Backend status pill (header)
 // ---------------------------------------------------------------
 function bindBackendStatus() {
+  const activeAdapter = adapter;
   adapter.subscribeStatus(({ status, backend, network }) => {
     const pill = $('#backendPill');
     pill.dataset.status = status;
@@ -230,7 +232,11 @@ function bindBackendStatus() {
       status === 'connecting' ? 'connecting…' : 'backend offline';
   });
   adapterReady = adapter.init();
-  adapterReady.catch((err) => console.error('backend init failed', err));
+  adapterReady.catch((err) => {
+    if (activeAdapter !== adapter) return;
+    console.error('backend init failed', err);
+    if (adapter.getBackendInfo().backend === 'bisq') { openConnect(); connectResult('error', err.message); }
+  });
 }
 
 // ---------------------------------------------------------------
@@ -569,7 +575,11 @@ function initAmountStep() {
 async function refreshWallet() {
   if (state.walletMode !== 'builtin' || !builtinWallet) { renderWallet(); return; }
   try {
-    state.walletStatus = await builtinWallet.status();
+    const wallet = builtinWallet;
+    const status = await wallet.status();
+    if (wallet !== builtinWallet) return;
+    state.walletStatus = status;
+    if (status.exists && !status.backedUp) await showRecoveryPhrase();
   } catch (err) {
     // A wallet we cannot ask about is one we must not rely on. Fall back to a
     // typed address rather than block the user entirely.
@@ -608,11 +618,20 @@ let walletSyncTimer = null;
 
 function startWalletSync() {
   if (walletSyncStarted || !builtinWallet) return;
+  const wallet = builtinWallet;
   walletSyncStarted = true;
-  builtinWallet.startSync().catch((e) => console.error('sync did not start:', e.message));
+  let busy = false;
   const tick = async () => {
-    try { renderWalletBalance(await builtinWallet.getBalance()); }
-    catch (e) { console.error('balance read failed:', e.message); }
+    if (busy || wallet !== builtinWallet) return;
+    busy = true;
+    try {
+      const balance = await wallet.getBalance();
+      if (wallet !== builtinWallet) return;
+      renderWalletBalance(balance);
+      if (!balance.syncing) await wallet.startSync();
+    } catch (e) {
+      if (wallet === builtinWallet) renderWalletBalance({ error: e.message });
+    } finally { busy = false; }
   };
   tick();
   walletSyncTimer = setInterval(tick, 5000);
@@ -732,9 +751,11 @@ async function onSendConfirm() {
     $('#sendConfirmWrap').hidden = true;
     $('#sendAddress').value = '';
     $('#sendAmount').value = '';
-    sendResult('ok', `Sent. Transaction ${txid}`);
+    sendResult('ok', `Broadcast submitted. Awaiting confirmation: ${txid}`);
   } catch (e) {
-    sendResult('error', e?.message || 'The transaction was not sent.');
+    sendToken = null;
+    $('#sendConfirmWrap').hidden = true;
+    sendResult('error', e?.message || 'The send outcome could not be confirmed.');
   } finally {
     btn.disabled = false;
   }
@@ -764,7 +785,9 @@ async function showRecoveryPhrase() {
   const list = $('#walletWords');
   list.replaceChildren();
   try {
-    const words = await builtinWallet.revealRecoveryPhrase();
+    const wallet = builtinWallet;
+    const words = await wallet.revealRecoveryPhrase();
+    if (wallet !== builtinWallet) return;
     for (const w of words) {
       const li = document.createElement('li');
       li.textContent = w;
@@ -903,6 +926,16 @@ function bindAmountStep() {
 let particleAnim = null;
 
 function initReviewStep() {
+  if (state.trade) {
+    renderRows($('#reviewRows'), [
+      { label: 'Trade', value: state.trade.id },
+      { label: 'Amount', value: Number.isFinite(state.trade.fiatAmountEur) ? fmtEUR(state.trade.fiatAmountEur) : 'Verify in Bisq' },
+      { label: 'Receive address', value: state.trade.receiveAddress || 'Verify in Bisq', mono: true },
+    ]);
+    $('#confirmBridgeBtn').disabled = true;
+    $('#confirmBridgeBtn').textContent = 'Following your existing trade…';
+    return;
+  }
   const offer = state.selectedOffer;
   if (!offer || !state.amountEur) { setStep(offer ? 3 : 2); return; }
 
@@ -1091,6 +1124,8 @@ const CONFIRM_LABEL = 'Take this offer <span class="material-symbols-outlined te
 const formatIban = (iban) => (iban || '').replace(/\s+/g, '').replace(/(.{4})/g, '$1 ').trim();
 
 function paymentPhase(name, waitMsg) {
+  $('#payTitle').textContent = { pay: 'Pay the seller by SEPA', wait: 'Trade in progress', receive: 'Confirm bitcoin received' }[name];
+  if (name !== 'pay') { $('#payRefreshDetails').hidden = true; $('#payError').textContent = ''; }
   $('#payPhasePay').hidden     = name !== 'pay';
   $('#payPhaseWait').hidden    = name !== 'wait';
   $('#payPhaseReceive').hidden = name !== 'receive';
@@ -1109,8 +1144,8 @@ function hidePayment() {
 
 /** Show the IBAN + GiroCode and resolve once the user confirms they paid
  *  (which marks the SEPA transfer sent on the backend). */
-function presentPayment(tradeId, instr, amountEur) {
-  $('#payAmount').textContent = fmtEUR(amountEur);
+function renderPaymentInstructions(instr, amountEur) {
+  $('#payAmount').textContent = Number.isFinite(instr.amountEur ?? amountEur) ? fmtEUR(instr.amountEur ?? amountEur) : 'Verify the amount in Bisq';
   $('#payName').textContent   = instr.receiverName || '—';
   $('#payIban').textContent   = formatIban(instr.iban);
   const bicRow = $('#payBicRow');
@@ -1133,58 +1168,83 @@ function presentPayment(tradeId, instr, amountEur) {
 
   paymentPhase('pay');
   showPayment();
+  $('#payError').textContent = instr.verificationError || (instr.paymentSent ? 'You already marked this transfer as sent. Retry the confirmation; do not pay again.' : '');
+  $('#payConfirmSent').textContent = instr.paymentSent ? 'Retry confirmation of my sent transfer' : "I've sent the SEPA transfer";
+  $('#payConfirmSent').disabled = !!instr.verificationError;
+  $('#payRefreshDetails').hidden = !instr.verificationError;
+}
 
-  return new Promise((resolve, reject) => {
+function presentPayment(tradeId, instr, amountEur) {
+  const activeAdapter = adapter;
+  renderPaymentInstructions(instr, amountEur);
+  $('#payRefreshDetails').onclick = async () => {
+    try {
+      const updated = await activeAdapter.getPaymentInstructions(tradeId);
+      if (adapter !== activeAdapter) return;
+      instr = updated;
+      renderPaymentInstructions(instr, amountEur);
+    } catch (e) { $('#payError').textContent = e.message; }
+  };
+  return new Promise((resolve) => {
     const btn = $('#payConfirmSent');
     const onClick = async () => {
-      btn.removeEventListener('click', onClick);
+      if (adapter !== activeAdapter || instr.verificationError) return;
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> Confirming…';
       try {
-        await adapter.confirmFiatSent(tradeId);
+        await activeAdapter.confirmFiatSent(tradeId);
+        if (adapter !== activeAdapter) return;
         paymentPhase('wait', 'Waiting for the seller to confirm receipt…');
+        btn.onclick = null;
         resolve();
       } catch (e) {
-        reject(e);
+        $('#payError').textContent = `Your payment confirmation is pending. Retry for this same trade. ${e.message}`;
       } finally {
         btn.disabled = false;
         btn.textContent = "I've sent the SEPA transfer";
       }
     };
-    btn.addEventListener('click', onClick);
+    btn.onclick = onClick;
   });
 }
 
 /** For non-custodial backends the trade parks after release until the user
  *  confirms the bitcoin arrived in their own wallet. */
 async function presentReceive(tradeId) {
-  const addr = state.receiveAddress || await adapter.getReceiveAddress().catch(() => null);
-  if (addr) $('#payAddr').textContent = addr;
+  const activeAdapter = adapter;
+  const addr = state.trade?.receiveAddress || state.resumable?.receiveAddress || state.receiveAddress;
+  $('#payAddr').textContent = addr || 'Original address unavailable — verify this trade in Bisq.';
+  $('#payError').textContent = '';
   paymentPhase('receive');
+  showPayment();
   return new Promise((resolve, reject) => {
     const btn = $('#payConfirmReceived');
     const onClick = async () => {
-      btn.removeEventListener('click', onClick);
+      if (adapter !== activeAdapter) return;
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> Confirming…';
       try {
-        await adapter.confirmBtcReceived(tradeId);
+        await activeAdapter.confirmBtcReceived(tradeId);
+        if (adapter !== activeAdapter) return;
+        btn.onclick = null;
         resolve();
       } catch (e) {
-        reject(e);
+        $('#payError').textContent = `Receipt confirmation is pending. Retry for this same trade. ${e.message}`;
       } finally {
         btn.disabled = false;
         btn.textContent = 'I received the bitcoin';
       }
     };
-    btn.addEventListener('click', onClick);
+    btn.onclick = onClick;
   });
 }
 
 async function runTrade() {
+  const activeAdapter = adapter;
   const offer = state.selectedOffer;
   const fiatAmountEur = state.amountEur;
-  const trade = await adapter.takeOffer(offer.id, { fiatAmountEur });
+  const trade = await activeAdapter.takeOffer(offer.id, { fiatAmountEur });
+  if (adapter !== activeAdapter) throw new Error('The node changed. Resume this trade on its original node.');
   state.trade = trade;
   await watchTrade(trade.id, fiatAmountEur);
 }
@@ -1198,10 +1258,14 @@ async function runTrade() {
  * carries no amounts, and the payment screen must show what is real rather
  * than invent a figure. */
 async function watchTrade(tradeId, fiatAmountEur) {
+  const activeAdapter = adapter;
   const btn = $('#confirmBridgeBtn');
   let shownPayment = false;
+  let shownReceive = false;
   await new Promise((resolve, reject) => {
-    const unsub = adapter.subscribeTrade(tradeId, async (tradeState, updated) => {
+    let unsub = () => {};
+    unsub = activeAdapter.subscribeTrade(tradeId, (tradeState, updated) => { queueMicrotask(async () => {
+      if (adapter !== activeAdapter) { unsub(); reject(new Error('Resume this trade on its original node.')); return; }
       if (updated) state.trade = updated;
       if (TRADE_LABELS[tradeState]) {
         btn.innerHTML = `<span class="spinner"></span> ${TRADE_LABELS[tradeState]}`;
@@ -1214,10 +1278,15 @@ async function watchTrade(tradeId, fiatAmountEur) {
           const instr = await adapter.getPaymentInstructions(tradeId);
           await presentPayment(tradeId, instr, fiatAmountEur);
         }
+        if (tradeState === TradeState.FIAT_SENT || tradeState === TradeState.OFFER_TAKEN) {
+          paymentPhase('wait', TRADE_LABELS[tradeState]); showPayment();
+        }
         if (tradeState === TradeState.FIAT_RECEIVED) {
+          showPayment();
           paymentPhase('wait', 'Seller confirmed the payment — releasing your bitcoin…');
         }
-        if (tradeState === TradeState.BTC_RELEASED) {
+        if (tradeState === TradeState.BTC_RELEASED && !shownReceive) {
+          shownReceive = true;
           // Non-custodial backends (BisqAdapter) don't auto-assert receipt.
           if (typeof adapter.confirmBtcReceived === 'function' && adapter.autoConfirmBtcReceipt !== true) {
             await presentReceive(tradeId);
@@ -1230,7 +1299,7 @@ async function watchTrade(tradeId, fiatAmountEur) {
       } catch (e) {
         hidePayment(); unsub(); reject(e);
       }
-    });
+    }); });
   });
 }
 
@@ -1247,20 +1316,32 @@ const RESUME_LABELS = {
 };
 
 async function checkForOpenTrades() {
+  const activeAdapter = adapter;
   if (typeof adapter.listOpenTrades !== 'function') return;
   let open = [];
   try {
-    open = await adapter.listOpenTrades();
+    open = await activeAdapter.listOpenTrades();
+    if (activeAdapter !== adapter) return;
   } catch (e) {
     // Never let this break startup: it is an extra, and the user can still
     // begin a new trade.
     console.error('could not list open trades:', e.message);
     return;
   }
-  if (!open.length) return;
+  if (!open.length) {
+    if (adapter.intent) {
+      $('#resumeDetail').textContent = 'The last purchase request has an uncertain outcome. Check and resolve it in Bisq before starting another.';
+      $('#resumeBanner').hidden = false;
+      $('#resumeBtn').hidden = true;
+      $('#resolveIntentBtn').hidden = false;
+    }
+    return;
+  }
 
   const t = open[0];
   state.resumable = t;
+  $('#resumeBtn').hidden = false;
+  $('#resolveIntentBtn').hidden = true;
   // An unmapped state is deliberately possible — see listOpenTrades. Say
   // something true and vague rather than inventing a step.
   const label = (t.state && RESUME_LABELS[t.state]) || 'in progress';
@@ -1276,13 +1357,16 @@ async function onResume() {
   btn.disabled = true;
   try {
     $('#resumeBanner').hidden = true;
+    state.trade = t;
+    state.receiveAddress = t.receiveAddress || '';
     setStep(4);
     // No amount: the node's snapshot carries none, and showing a made-up
     // figure next to someone's money would be worse than showing none.
-    await watchTrade(t.id, null);
+    await watchTrade(t.id, t.fiatAmountEur ?? null);
     setStep(5);
   } catch (e) {
     console.error('resume failed:', e.message);
+    $('#resumeDetail').textContent = e.message;
     $('#resumeBanner').hidden = false;
   } finally {
     btn.disabled = false;
@@ -1292,7 +1376,7 @@ async function onResume() {
 function bindTakeOffer() {
   const btn = $('#confirmBridgeBtn');
   btn.addEventListener('click', async () => {
-    if (!state.selectedOffer || state.amountEur <= 0 || btn.dataset.busy) return;
+    if (state.trade || !state.selectedOffer || state.amountEur <= 0 || btn.dataset.busy) return;
     btn.dataset.busy = '1';
     btn.classList.add('is-disabled');
     btn.innerHTML = '<span class="spinner"></span> Taking the offer…';
@@ -1314,7 +1398,12 @@ function bindTakeOffer() {
     if (failed) {
       // A real backend can fail here; say so instead of pretending it worked.
       const rows = $('#reviewRows');
-      renderRows(rows, [{ label: 'Trade failed', value: failed.message || String(failed) }]);
+      renderRows(rows, [{ label: 'Trade needs attention', value: failed.message || String(failed) }]);
+      if (state.trade || adapter.intent) {
+        btn.disabled = true;
+        btn.textContent = 'Resolve the existing trade before buying again';
+        await checkForOpenTrades();
+      }
       return;
     }
 
@@ -1350,8 +1439,9 @@ function renderCompletion() {
     ? satsToBtc(trade.btcAmountSats)
     : (offer && state.amountEur ? state.amountEur / offer.priceEurPerBtc : 0);
 
-  $('#portfolioSats').textContent  = `≈ ${fmtBTC(btc)}`;
-  $('#portfolioAmount').textContent = `for ${fmtEUR(trade?.fiatAmountEur ?? state.amountEur)}`;
+  $('#portfolioSats').textContent = btc > 0 ? `≈ ${fmtBTC(btc)}` : 'Amount recorded in Bisq';
+  const fiat = trade?.fiatAmountEur ?? state.amountEur;
+  $('#portfolioAmount').textContent = fiat > 0 ? `for ${fmtEUR(fiat)}` : 'Verify the completed trade in Bisq';
 
   const rows = [
     { label: 'To your address', value: state.receiveAddress || '—', mono: true },
@@ -1435,6 +1525,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   bindAmountStep();
   bindTakeOffer();
   bindNewTrade();
+  $('#resolveIntentBtn').onclick = () => {
+    // Explicit attestation after checking the canonical node, never a timeout.
+    adapter.intent = null;
+    adapter._persist();
+    $('#resumeBanner').hidden = true;
+    setStep(2);
+  };
   if (!(await applyDeepLink())) setStep(1);
 
   // Once the backend is up, see whether a trade was left running. Deliberately

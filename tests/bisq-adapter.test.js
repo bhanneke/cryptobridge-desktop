@@ -231,7 +231,7 @@ function adapterWithTrades(props) {
   return a;
 }
 
-test('listOpenTrades returns the live ones and drops the finished ones', async () => {
+test('listOpenTrades retains released trades until local receipt is confirmed', async () => {
   const a = adapterWithTrades({
     done:  { tradeState: 'BTC_CONFIRMED', paymentAccountData: 'x' },
     gone:  { tradeState: 'PEER_CANCELLED' },
@@ -239,11 +239,11 @@ test('listOpenTrades returns the live ones and drops the finished ones', async (
              paymentAccountData: 'Alice, IBAN DE02…', bitcoinPaymentData: 'bcrt1qabc' },
   });
   const open = await a.listOpenTrades();
-  assert.equal(open.length, 1);
-  assert.equal(open[0].id, 'live');
-  assert.equal(open[0].state, TradeState.FIAT_SENT);
-  assert.equal(open[0].sellerDetails, 'Alice, IBAN DE02…');
-  assert.equal(open[0].receiveAddress, 'bcrt1qabc');
+  assert.deepEqual(open.map(t => [t.id, t.state]), [['done', TradeState.BTC_RELEASED], ['live', TradeState.FIAT_SENT]]);
+  assert.equal(open[1].sellerDetails, 'Alice, IBAN DE02…');
+  assert.equal(open[1].receiveAddress, 'bcrt1qabc');
+  a.btcReceiptSent.add('done');
+  assert.deepEqual((await a.listOpenTrades()).map(t => t.id), ['live']);
 });
 
 /* The failure that matters most here. Bisq's state strings are compound and

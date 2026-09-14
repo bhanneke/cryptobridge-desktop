@@ -64,11 +64,16 @@ pub struct WalletState {
     inner: tokio::sync::Mutex<Option<Loaded>>,
     /// A plain mutex: nothing awaits while this one is held.
     sync: Mutex<SyncShared>,
+    control: tokio::sync::Mutex<()>,
+    task: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    scripts_changed: tokio::sync::Notify,
+    scripts_ready: tokio::sync::Notify,
 }
 
 /// What the UI is told about chain sync.
 #[derive(Default, Clone, Serialize)]
 pub struct SyncStatus {
+    pub network: Option<String>,
     /// A sync task is alive.
     pub running: bool,
     /// At least one update has been applied, so the balance means something.
@@ -92,6 +97,7 @@ struct SyncShared {
     /// Transactions built and shown to the user, awaiting their confirmation.
     /// Keyed by a token handed back with the preview.
     pending: std::collections::HashMap<String, PendingSend>,
+    coverage: Option<(Network, Option<u32>, Option<u32>)>,
 }
 
 struct PendingSend {
@@ -113,9 +119,33 @@ impl WalletState {
         Self::default()
     }
 
-    fn set_sync<F: FnOnce(&mut SyncStatus)>(&self, f: F) {
+    fn set_sync<F: FnOnce(&mut SyncStatus)>(&self, network: Network, f: F) {
         if let Ok(mut g) = self.sync.lock() {
-            f(&mut g.status);
+            if g.started_for == Some(network) {
+                f(&mut g.status);
+            }
+        }
+    }
+
+    // Call with control held. Shutdown and join before replacing a network.
+    async fn stop_sync(&self) {
+        if let Ok(mut g) = self.sync.lock() {
+            if let Some(r) = g.requester.take() {
+                let _ = r.shutdown();
+            }
+            g.pending.clear();
+            g.coverage = None;
+            g.status.running = false;
+        }
+        self.scripts_ready.notify_waiters();
+        if let Some(mut task) = self.task.lock().await.take() {
+            if tokio::time::timeout(std::time::Duration::from_secs(5), &mut task)
+                .await
+                .is_err()
+            {
+                task.abort();
+                let _ = task.await;
+            }
         }
     }
 }
@@ -182,47 +212,6 @@ fn backup_marker<R: Runtime>(app: &AppHandle<R>, network: Network) -> Result<Pat
     Ok(data_dir(app)?.join(format!("wallet-{network}.backed-up")))
 }
 
-/// Where the wallet's birthday lives: the chain tip as it was the first time
-/// this wallet saw the network.
-///
-/// Without it, chain sync starts at genesis. BDK gives a freshly created
-/// wallet a genesis checkpoint, Kyoto's ScanType::Sync starts from
-/// wallet.latest_checkpoint(), and so a wallet made this morning would
-/// download and match every compact filter since 2009. Nothing before the
-/// wallet existed can concern it.
-///
-/// Stored as "height:hash" in plain text. It is a public fact about the
-/// blockchain, not a secret, and a wrong value costs a rescan rather than
-/// money -- Kyoto validates the header chain regardless.
-fn birthday_path<R: Runtime>(app: &AppHandle<R>, network: Network) -> Result<PathBuf, String> {
-    Ok(data_dir(app)?.join(format!("wallet-{network}.birthday")))
-}
-
-/// "height:hash". Pure, so the parsing can be tested: a birthday file that
-/// fails to parse silently sends sync back to genesis, which is slow rather
-/// than wrong and therefore easy not to notice.
-fn parse_birthday(text: &str) -> Option<bdk_kyoto::HashCheckpoint> {
-    let (h, hash) = text.trim().split_once(':')?;
-    bdk_kyoto::HashCheckpoint::try_from((h.trim().parse::<u32>().ok()?, hash.trim())).ok()
-}
-
-fn format_birthday(cp: &bdk_kyoto::HashCheckpoint) -> String {
-    format!("{}:{}", cp.height, cp.hash)
-}
-
-fn read_birthday<R: Runtime>(app: &AppHandle<R>, network: Network) -> Option<bdk_kyoto::HashCheckpoint> {
-    let text = std::fs::read_to_string(birthday_path(app, network).ok()?).ok()?;
-    parse_birthday(&text)
-}
-
-fn write_birthday<R: Runtime>(app: &AppHandle<R>,
-    network: Network,
-    cp: &bdk_kyoto::HashCheckpoint,
-) -> Result<(), String> {
-    std::fs::write(birthday_path(app, network)?, format_birthday(cp))
-        .map_err(|e| format!("could not record the wallet birthday: {e}"))
-}
-
 /// Descriptors for a mnemonic. Returned as strings containing the xprv, so they
 /// are secret: they are handed straight to BDK and never logged, persisted or
 /// sent over IPC.
@@ -236,7 +225,8 @@ fn descriptors(mnemonic: &Mnemonic, network: Network) -> Result<(String, String)
     ))
 }
 
-fn load_from_mnemonic<R: Runtime>(app: &AppHandle<R>,
+fn load_from_mnemonic<R: Runtime>(
+    app: &AppHandle<R>,
     mnemonic: &Mnemonic,
     network: Network,
 ) -> Result<Loaded, String> {
@@ -279,6 +269,11 @@ pub async fn wallet_status<R: Runtime>(
     network: String,
 ) -> Result<WalletStatus, String> {
     let net = parse_network(&network)?;
+    let _control = state.control.lock().await;
+    let switching = state.inner.lock().await.as_ref().map(|l| l.network) != Some(net);
+    if switching {
+        state.stop_sync().await;
+    }
     let backed_up = backup_marker(&app, net)?.exists();
 
     let mut guard = state.inner.lock().await;
@@ -319,6 +314,7 @@ pub async fn wallet_create<R: Runtime>(
     network: String,
 ) -> Result<WalletStatus, String> {
     let net = parse_network(&network)?;
+    let _control = state.control.lock().await;
     let entry = keyring_entry(net)?;
 
     match entry.get_password() {
@@ -336,6 +332,7 @@ pub async fn wallet_create<R: Runtime>(
         .set_password(&mnemonic.to_string())
         .map_err(|e| format!("could not save the recovery phrase: {e}"))?;
 
+    state.stop_sync().await;
     let loaded = load_from_mnemonic(&app, &mnemonic, net)?;
     let mut guard = state.inner.lock().await;
     *guard = Some(loaded);
@@ -404,6 +401,7 @@ pub async fn wallet_next_address<R: Runtime>(
     state: State<'_, Arc<WalletState>>,
     network: String,
 ) -> Result<NewAddress, String> {
+    let _control = state.control.lock().await;
     let net = parse_network(&network)?;
 
     // Receiving into a wallet the user cannot recover is the one failure that
@@ -424,6 +422,9 @@ pub async fn wallet_next_address<R: Runtime>(
         .persist(&mut loaded.conn)
         .map_err(|e| format!("could not save the new address index: {e}"))?;
 
+    let indices = revealed_indices(&loaded.wallet);
+    drop(guard);
+    ensure_script_coverage(&state, net, indices).await?;
     Ok(NewAddress {
         address: info.address.to_string(),
         index: info.index,
@@ -442,13 +443,93 @@ pub async fn wallet_next_address<R: Runtime>(
 // announce every address we care about to whichever peers we connected to --
 // the precise leak compact block filters exist to prevent.
 
+use crate::proxy::TOR_SOCKS;
 use bdk_kyoto::bip157::Socks5Proxy;
 use bdk_kyoto::builder::{Builder as KyotoBuilder, BuilderExt};
 use bdk_kyoto::ScanType;
-use crate::proxy::TOR_SOCKS;
 
-/// Begin syncing in the background. Idempotent: calling it twice for the same
-/// network does not start a second node.
+// Include every revealed receive/change address before the first filter. The
+// extra gap covers unused addresses too. Restart from a conservative checkpoint
+// whenever the app reveals another address: Kyoto owns a snapshot of the index.
+const SCAN_LOOKAHEAD: u32 = 100;
+
+fn scan_type(wallet: &Wallet, repaired: bool) -> ScanType {
+    let checkpoint = if repaired {
+        let cp = wallet
+            .latest_checkpoint()
+            .iter()
+            .nth(7)
+            .unwrap_or_else(|| wallet.latest_checkpoint().iter().last().unwrap());
+        bdk_kyoto::HashCheckpoint::new(cp.height(), cp.hash())
+    } else {
+        // Older releases may have skipped filters. Do one full recovery even
+        // if their DB claims to be synced. Never trust an unverified birthday.
+        bdk_kyoto::HashCheckpoint::from_genesis(wallet.network())
+    };
+    ScanType::Recovery {
+        used_script_index: SCAN_LOOKAHEAD,
+        checkpoint,
+    }
+}
+
+/// Resolve seed names inside Tor. whitelist_only is mandatory even with peers:
+/// Kyoto otherwise falls back to the OS resolver when the peer list runs out.
+async fn tor_peers(network: Network) -> Result<Vec<bdk_kyoto::TrustedPeer>, String> {
+    let seeds: &[&str] =
+        match network {
+            Network::Bitcoin => &[
+                "seed.bitcoin.sipa.be",
+                "seed.bitcoin.sprovoost.nl",
+                "dnsseed.emzy.de",
+                "seed.bitcoin.wiz.biz",
+            ],
+            Network::Testnet => &[
+                "testnet-seed.bitcoin.jonasschnelli.ch",
+                "seed.testnet.bitcoin.sprovoost.nl",
+            ],
+            Network::Signet => &[
+                "seed.signet.bitcoin.sprovoost.nl",
+                "seed.signet.achownodes.xyz",
+            ],
+            Network::Regtest => return Err(
+                "regtest sync requires CRYPTOBRIDGE_REGTEST_PEER (an IP:port reached through Tor)"
+                    .into(),
+            ),
+            _ => return Err("unsupported Bitcoin network".into()),
+        };
+    let proxy: std::net::SocketAddr = TOR_SOCKS.parse().map_err(|_| "invalid Tor proxy address")?;
+    let results =
+        futures_util::future::join_all(seeds.iter().map(|seed| resolve_tor_seed(proxy, seed)))
+            .await;
+    let ips: std::collections::HashSet<_> = results.into_iter().filter_map(Result::ok).collect();
+    if ips.is_empty() {
+        return Err(format!(
+            "could not discover Bitcoin peers through Tor at {TOR_SOCKS}"
+        ));
+    }
+    Ok(ips
+        .into_iter()
+        .map(bdk_kyoto::TrustedPeer::from_ip)
+        .collect())
+}
+
+async fn resolve_tor_seed(
+    proxy: std::net::SocketAddr,
+    seed: &str,
+) -> Result<std::net::IpAddr, String> {
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        tokio_socks::tcp::Socks5Stream::tor_resolve(proxy, (format!("x49.{seed}"), 0)),
+    )
+    .await
+    .map_err(|_| "Tor name resolution timed out")?
+    .map_err(|e| e.to_string())?;
+    match result {
+        tokio_socks::TargetAddr::Ip(addr) => Ok(addr.ip()),
+        _ => Err("Tor did not return a peer IP".into()),
+    }
+}
+
 #[tauri::command]
 pub async fn wallet_start_sync<R: Runtime>(
     app: AppHandle<R>,
@@ -456,62 +537,61 @@ pub async fn wallet_start_sync<R: Runtime>(
     network: String,
 ) -> Result<SyncStatus, String> {
     let net = parse_network(&network)?;
-    let shared: Arc<WalletState> = Arc::clone(&state);
-
+    let _control = state.control.lock().await;
     {
-        let mut g = shared.sync.lock().map_err(|_| "sync lock poisoned")?;
+        let g = state.sync.lock().map_err(|_| "sync lock poisoned")?;
         if g.started_for == Some(net) && g.status.running {
             return Ok(g.status.clone());
         }
+    }
+    if state.inner.lock().await.as_ref().map(|l| l.network) != Some(net) {
+        return Err("no wallet loaded for this network".into());
+    }
+    state.stop_sync().await;
+    {
+        let mut g = state.sync.lock().map_err(|_| "sync lock poisoned")?;
         g.started_for = Some(net);
         g.status = SyncStatus {
+            network: Some(network),
             running: true,
             ..Default::default()
         };
     }
-
-    let task_state = Arc::clone(&shared);
-    tauri::async_runtime::spawn(async move {
-        if let Err(e) = sync_loop(Arc::clone(&task_state), app, net).await {
-            task_state.set_sync(|s| {
-                s.running = false;
-                s.last_error = Some(e);
-            });
-        } else {
-            task_state.set_sync(|s| s.running = false);
+    let shared = Arc::clone(&state);
+    *state.task.lock().await = Some(tokio::spawn(async move {
+        let result = sync_loop(Arc::clone(&shared), app, net).await;
+        if let Ok(mut g) = shared.sync.lock() {
+            if g.started_for == Some(net) {
+                if let Some(r) = g.requester.take() {
+                    let _ = r.shutdown();
+                }
+                g.status.running = false;
+                if let Err(e) = result {
+                    g.status.last_error = Some(e);
+                }
+            }
         }
-    });
-
-    let g = shared.sync.lock().map_err(|_| "sync lock poisoned")?;
-    Ok(g.status.clone())
-}
-
-/// The balance, and whether it means anything yet.
-#[tauri::command]
-pub fn wallet_sync_status(state: State<'_, Arc<WalletState>>) -> Result<SyncStatus, String> {
+        shared.scripts_ready.notify_waiters();
+    }));
     let g = state.sync.lock().map_err(|_| "sync lock poisoned")?;
     Ok(g.status.clone())
 }
 
-/// Ask the network where the tip is, then stop.
-///
-/// A separate short-lived node because the checkpoint has to be chosen before
-/// the real client is built, and there is no "start at the tip" chain state.
-/// It costs one header pass; the alternative is shipping a hardcoded recent
-/// block hash, which ages and cannot be verified from here.
-async fn probe_chain_tip(network: Network) -> Result<bdk_kyoto::HashCheckpoint, String> {
-    let (node, client) = KyotoBuilder::new(network)
-        .socks5_proxy(Socks5Proxy::local())
-        .build();
-    let handle = tauri::async_runtime::spawn(async move {
-        let _ = node.run().await;
-    });
-    let tip = client.requester.chain_tip().await.map_err(|e| {
-        format!("could not reach the Bitcoin network to find the chain tip: {e}. Is tor running on {TOR_SOCKS}?")
-    });
-    let _ = client.requester.shutdown();
-    handle.abort();
-    tip
+#[tauri::command]
+pub fn wallet_sync_status(
+    state: State<'_, Arc<WalletState>>,
+    network: String,
+) -> Result<SyncStatus, String> {
+    let net = parse_network(&network)?;
+    let g = state.sync.lock().map_err(|_| "sync lock poisoned")?;
+    Ok(if g.started_for == Some(net) {
+        g.status.clone()
+    } else {
+        SyncStatus {
+            network: Some(network),
+            ..Default::default()
+        }
+    })
 }
 
 async fn sync_loop<R: Runtime>(
@@ -519,96 +599,230 @@ async fn sync_loop<R: Runtime>(
     app: AppHandle<R>,
     network: Network,
 ) -> Result<(), String> {
-    // Where should filter matching start?
-    //
-    // A wallet this app created has no history, so the honest answer is "the
-    // tip when it was made". BDK hands a new wallet a genesis checkpoint and
-    // ScanType::Sync starts from there, which on mainnet means every filter
-    // since 2009. So: if the wallet has never seen a block, find the tip once,
-    // remember it, and scan from there ever after.
-    let fresh = {
-        let g = state.inner.lock().await;
-        g.as_ref()
-            .filter(|l| l.network == network)
-            .map(|l| l.wallet.latest_checkpoint().height() == 0)
-            .ok_or("no wallet loaded for this network")?
-    };
-
-    let scan_type = if fresh {
-        let cp = match read_birthday(&app, network) {
-            Some(cp) => cp,
-            None => {
-                let cp = probe_chain_tip(network).await?;
-                write_birthday(&app, network, &cp)?;
-                cp
-            }
-        };
-        ScanType::Recovery {
-            used_script_index: 0,
-            checkpoint: cp,
-        }
+    let peers = if network == Network::Regtest {
+        let addr: std::net::SocketAddr = std::env::var("CRYPTOBRIDGE_REGTEST_PEER")
+            .map_err(|_| "set CRYPTOBRIDGE_REGTEST_PEER to an IP:port for the test node")?
+            .parse()
+            .map_err(|_| "CRYPTOBRIDGE_REGTEST_PEER must be a literal IP:port")?;
+        vec![addr.into()]
     } else {
-        // The wallet has its own history now; carry on from where it got to.
-        ScanType::Sync
+        tor_peers(network).await?
     };
-
-    // Build the client while holding the wallet briefly, then let go: the loop
-    // below must not keep the wallet locked while waiting on the network, or
-    // asking for a receive address would block until the next block.
-    let (client, mut subscriber) = {
-        let mut g = state.inner.lock().await;
-        let loaded = g
-            .as_mut()
-            .filter(|l| l.network == network)
-            .ok_or("no wallet loaded for this network")?;
-
-        let light = KyotoBuilder::new(network)
-            .socks5_proxy(Socks5Proxy::local())
-            .build_with_wallet(&loaded.wallet, scan_type)
-            .map_err(|e| format!("could not build the chain client: {e}"))?;
-        let (client, _logging, subscriber) = light.subscribe();
-        (client, subscriber)
-    };
-
-    // start() moves the client into its active state; requester() then takes
-    // the handle out of it. Keeping that handle is what makes broadcasting
-    // possible at all -- a send needs the same connection the sync uses.
-    let active = client.start();
-    let requester = active.requester();
-    if let Ok(mut g) = state.sync.lock() {
-        g.requester = Some(requester);
-    }
-
+    let dir = data_dir(&app)?.join(format!("chain-{network}"));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create chain directory: {e}"))?;
+    let repaired_marker = data_dir(&app)?.join(format!("wallet-{network}.scan-v2"));
     loop {
-        let update = subscriber
-            .update()
-            .await
-            .map_err(|e| format!("chain sync stopped: {e}. Is tor running on {TOR_SOCKS}?"))?;
-
-        let mut g = state.inner.lock().await;
-        let Some(loaded) = g.as_mut().filter(|l| l.network == network) else {
-            return Ok(()); // the wallet went away (network switched); stop quietly
+        let (client, mut subscriber) = {
+            let g = state.inner.lock().await;
+            let loaded = g
+                .as_ref()
+                .filter(|l| l.network == network)
+                .ok_or("wallet network changed")?;
+            let light = KyotoBuilder::new(network)
+                .socks5_proxy(Socks5Proxy::local())
+                .whitelist_only()
+                .add_peers(peers.clone())
+                .data_dir(&dir)
+                .build_with_wallet(
+                    &loaded.wallet,
+                    scan_type(&loaded.wallet, repaired_marker.exists()),
+                )
+                .map_err(|e| format!("could not build the chain client: {e}"))?;
+            let (client, _, subscriber) = light.subscribe();
+            let (external, internal) = revealed_indices(&loaded.wallet);
+            state
+                .sync
+                .lock()
+                .map_err(|_| "sync lock poisoned")?
+                .coverage = Some((network, external, internal));
+            state.scripts_ready.notify_waiters();
+            (client, subscriber)
         };
-        loaded
-            .wallet
-            .apply_update(update)
-            .map_err(|e| format!("could not apply a chain update: {e}"))?;
-        loaded
-            .wallet
-            .persist(&mut loaded.conn)
-            .map_err(|e| format!("could not save chain data: {e}"))?;
-
-        let balance = loaded.wallet.balance();
-        drop(g);
-
-        state.set_sync(|st| {
-            st.synced = true;
-            st.confirmed_sats = balance.confirmed.to_sat();
-            st.pending_sats =
-                balance.trusted_pending.to_sat() + balance.untrusted_pending.to_sat();
-            st.last_error = None;
-        });
+        let (active, node) = client.managed_start();
+        let (cancel_node, mut node_task) = spawn_owned_node(node);
+        let requester = active.requester();
+        state
+            .sync
+            .lock()
+            .map_err(|_| "sync lock poisoned")?
+            .requester = Some(requester.clone());
+        // Running the node in this future means cancellation cannot orphan it.
+        let updates = async {
+            loop {
+                let update = subscriber
+                    .update()
+                    .await
+                    .map_err(|e| format!("chain sync stopped: {e}"))?;
+                let mut g = state.inner.lock().await;
+                let loaded = g
+                    .as_mut()
+                    .filter(|l| l.network == network)
+                    .ok_or("wallet network changed")?;
+                loaded
+                    .wallet
+                    .apply_update(update)
+                    .map_err(|e| format!("could not apply chain update: {e}"))?;
+                loaded
+                    .wallet
+                    .persist(&mut loaded.conn)
+                    .map_err(|e| format!("could not save chain data: {e}"))?;
+                std::fs::write(&repaired_marker, b"1")
+                    .map_err(|e| format!("could not save scan status: {e}"))?;
+                update_balance(&state, loaded);
+            }
+            #[allow(unreachable_code)]
+            Ok::<(), String>(())
+        };
+        let rebroadcast = async {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let txs = {
+                    let mut g = state.inner.lock().await;
+                    let loaded = g
+                        .as_mut()
+                        .filter(|l| l.network == network)
+                        .ok_or("wallet network changed")?;
+                    // A previous persist may have failed after updating BDK in
+                    // memory. Never broadcast that transaction until it is durable.
+                    loaded
+                        .wallet
+                        .persist(&mut loaded.conn)
+                        .map_err(|e| format!("could not save pending sends: {e}"))?;
+                    loaded
+                        .wallet
+                        .transactions()
+                        .filter(|t| {
+                            !t.chain_position.is_confirmed()
+                                && loaded.wallet.sent_and_received(&t.tx_node.tx).0.to_sat() > 0
+                        })
+                        .map(|t| t.tx_node.tx.as_ref().clone())
+                        .collect::<Vec<_>>()
+                };
+                for tx in txs {
+                    // Retrying the same signed transaction cannot create another payment.
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(30),
+                        requester.submit_package(tx),
+                    )
+                    .await;
+                }
+            }
+            #[allow(unreachable_code)]
+            Ok::<(), String>(())
+        };
+        let result = tokio::select! {
+            result = &mut node_task => Some(Err(format!("Bitcoin node stopped: {result:?}"))),
+            result = updates => Some(result),
+            result = rebroadcast => Some(result),
+            _ = state.scripts_changed.notified() => None,
+        };
+        let _ = requester.shutdown();
+        drop(cancel_node);
+        // Await the runtime teardown before building a replacement.
+        if !node_task.is_finished() {
+            let _ = node_task.await;
+        }
+        if let Some(result) = result {
+            return result;
+        }
     }
+}
+
+// Kyoto 0.17 spawns peer tasks without joining them on Node::shutdown.
+// Dropping this sender cancels the node; runtime teardown aborts its children.
+fn spawn_owned_node(
+    node: bdk_kyoto::Node,
+) -> (
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<Result<(), String>>,
+) {
+    let (cancel_node, stopped) = tokio::sync::oneshot::channel::<()>();
+    let task = tokio::task::spawn_blocking(move || {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .map_err(|e| e.to_string())?;
+        runtime.block_on(async {
+            tokio::select! {
+                result = node.run() => result.map_err(|e| e.to_string()),
+                _ = stopped => Ok(()),
+            }
+        })
+    });
+    (cancel_node, task)
+}
+
+fn revealed_indices(wallet: &Wallet) -> (Option<u32>, Option<u32>) {
+    (
+        wallet.derivation_index(KeychainKind::External),
+        wallet.derivation_index(KeychainKind::Internal),
+    )
+}
+
+// Do not expose a new receive/change address while an active subscriber still
+// holds an older index. Otherwise it could save a tip past the first payment
+// before its restart notification is processed. On timeout, no address/PSBT is
+// handed to the caller, so it cannot initiate that payment through this app.
+async fn ensure_script_coverage(
+    state: &WalletState,
+    network: Network,
+    required: (Option<u32>, Option<u32>),
+) -> Result<(), String> {
+    state.scripts_changed.notify_one();
+    let wait = async {
+        loop {
+            let changed = state.scripts_ready.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            {
+                let g = state.sync.lock().map_err(|_| "sync lock poisoned")?;
+                if g.started_for != Some(network) || !g.status.running {
+                    return Ok(());
+                }
+                if let Some((net, external, internal)) = g.coverage {
+                    if net == network && external >= required.0 && internal >= required.1 {
+                        return Ok(());
+                    }
+                }
+            }
+            changed.await;
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(40), wait)
+        .await
+        .map_err(|_| {
+            "wallet is updating its address coverage; retry after sync reconnects".to_string()
+        })?
+}
+
+fn update_balance(state: &WalletState, loaded: &Loaded) {
+    let balance = loaded.wallet.balance();
+    state.set_sync(loaded.network, |st| {
+        st.synced = true;
+        st.confirmed_sats = balance.confirmed.to_sat();
+        st.pending_sats = balance.trusted_pending.to_sat() + balance.untrusted_pending.to_sat();
+        st.last_error = None;
+    });
+}
+
+// Persist BEFORE broadcast. An uncertain network result must never make the
+// inputs spendable again. BDK restores this pending transaction after restart.
+fn record_outgoing(
+    loaded: &mut Loaded,
+    tx: bdk_wallet::bitcoin::Transaction,
+) -> Result<(), String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("system clock unavailable: {e}"))?
+        .as_secs();
+    loaded.wallet.apply_unconfirmed_txs([(tx, now)]);
+    loaded
+        .wallet
+        .persist(&mut loaded.conn)
+        .map_err(|e| format!("could not save outgoing transaction: {e}"))?;
+    Ok(())
 }
 
 // --- spending ---------------------------------------------------------------
@@ -635,9 +849,16 @@ pub struct SendPreview {
 /// The lowest fee rate our peers will relay, in sat/vB. A light client cannot
 /// estimate confirmation times honestly, so this is a floor, not advice.
 #[tauri::command]
-pub async fn wallet_fee_floor(state: State<'_, Arc<WalletState>>) -> Result<u64, String> {
+pub async fn wallet_fee_floor(
+    state: State<'_, Arc<WalletState>>,
+    network: String,
+) -> Result<u64, String> {
+    let net = parse_network(&network)?;
     let requester = {
         let g = state.sync.lock().map_err(|_| "sync lock poisoned")?;
+        if g.started_for != Some(net) {
+            return Err("wallet network is not connected".into());
+        }
         g.requester.clone()
     };
     let requester = requester.ok_or("not connected to the Bitcoin network yet")?;
@@ -658,6 +879,7 @@ pub async fn wallet_send_preview(
     amount_sats: u64,
     fee_rate_sat_vb: u64,
 ) -> Result<SendPreview, String> {
+    let _control = state.control.lock().await;
     let net = parse_network(&network)?;
 
     // Parse and network-check the destination before anything else. A valid
@@ -672,8 +894,14 @@ pub async fn wallet_send_preview(
     if amount_sats == 0 {
         return Err("enter an amount to send".into());
     }
-    let fee_rate = BdkFeeRate::from_sat_per_vb(fee_rate_sat_vb)
-        .ok_or("that fee rate is not usable")?;
+    {
+        let g = state.sync.lock().map_err(|_| "sync lock poisoned")?;
+        if g.started_for != Some(net) || !g.status.synced {
+            return Err("wait for wallet recovery to finish before sending".into());
+        }
+    }
+    let fee_rate =
+        BdkFeeRate::from_sat_per_vb(fee_rate_sat_vb).ok_or("that fee rate is not usable")?;
 
     let mut guard = state.inner.lock().await;
     let loaded = guard
@@ -681,19 +909,14 @@ pub async fn wallet_send_preview(
         .filter(|l| l.network == net)
         .ok_or("no wallet loaded for this network")?;
 
-    let mut builder = loaded.wallet.build_tx();
-    builder
-        .add_recipient(parsed.script_pubkey(), Amount::from_sat(amount_sats))
-        .fee_rate(fee_rate);
-    let psbt = builder
-        .finish()
-        .map_err(|e| format!("could not build the transaction: {e}"))?;
-
+    let psbt = build_send(loaded, parsed.script_pubkey(), amount_sats, fee_rate)?;
     let fee = psbt
         .fee()
         .map_err(|e| format!("could not work out the fee: {e}"))?
         .to_sat();
+    let indices = revealed_indices(&loaded.wallet);
     drop(guard);
+    ensure_script_coverage(&state, net, indices).await?;
 
     // A token rather than an index: it is handed to the webview, and a
     // guessable handle to "sign this" is not something to leave lying around.
@@ -708,13 +931,8 @@ pub async fn wallet_send_preview(
         // One pending send at a time: a queue of half-approved transactions is
         // a way to send the wrong one.
         g.pending.clear();
-        g.pending.insert(
-            token.clone(),
-            PendingSend {
-                psbt,
-                network: net,
-            },
-        );
+        g.pending
+            .insert(token.clone(), PendingSend { psbt, network: net });
     }
 
     Ok(SendPreview {
@@ -724,6 +942,26 @@ pub async fn wallet_send_preview(
         fee_sats: fee,
         total_sats: amount_sats.saturating_add(fee),
     })
+}
+
+fn build_send(
+    loaded: &mut Loaded,
+    destination: bdk_wallet::bitcoin::ScriptBuf,
+    amount_sats: u64,
+    fee_rate: BdkFeeRate,
+) -> Result<bdk_wallet::bitcoin::Psbt, String> {
+    let mut builder = loaded.wallet.build_tx();
+    builder
+        .add_recipient(destination, Amount::from_sat(amount_sats))
+        .fee_rate(fee_rate);
+    let psbt = builder
+        .finish()
+        .map_err(|e| format!("could not build the transaction: {e}"))?;
+    loaded
+        .wallet
+        .persist(&mut loaded.conn)
+        .map_err(|e| format!("could not save change address: {e}"))?;
+    Ok(psbt)
 }
 
 /// Sign and broadcast the transaction the user was shown.
@@ -741,6 +979,9 @@ pub async fn wallet_send_confirm(
 
     let requester = {
         let g = state.sync.lock().map_err(|_| "sync lock poisoned")?;
+        if g.started_for != Some(pending.network) {
+            return Err("wallet network is not connected".into());
+        }
         g.requester.clone()
     };
     let requester = requester
@@ -753,6 +994,19 @@ pub async fn wallet_send_confirm(
             .filter(|l| l.network == pending.network)
             .ok_or("no wallet loaded for this network")?;
 
+        let available: std::collections::HashSet<_> =
+            loaded.wallet.list_unspent().map(|o| o.outpoint).collect();
+        if pending
+            .psbt
+            .unsigned_tx
+            .input
+            .iter()
+            .any(|i| !available.contains(&i.previous_output))
+        {
+            return Err(
+                "transaction inputs are no longer available; review a new transaction".into(),
+            );
+        }
         let finished = loaded
             .wallet
             .sign(&mut pending.psbt, SignOptions::default())
@@ -760,18 +1014,21 @@ pub async fn wallet_send_confirm(
         if !finished {
             return Err("the transaction could not be fully signed".into());
         }
-        pending
+        let tx = pending
             .psbt
             .clone()
             .extract_tx()
-            .map_err(|e| format!("could not finalise the transaction: {e}"))?
+            .map_err(|e| format!("could not finalise the transaction: {e}"))?;
+        record_outgoing(loaded, tx.clone())?;
+        update_balance(&state, loaded);
+        tx
     };
 
     let txid = tx.compute_txid();
-    requester
-        .submit_package(tx)
-        .await
-        .map_err(|e| format!("the network would not accept the transaction: {e}"))?;
+    match tokio::time::timeout(std::time::Duration::from_secs(30), requester.submit_package(tx)).await {
+        Ok(Ok(_)) => {},
+        _ => return Err(format!("Transaction {txid} is saved, but broadcast is unconfirmed. It will be retried when connected. Do not create a replacement payment.")),
+    }
     Ok(txid.to_string())
 }
 
@@ -814,17 +1071,23 @@ mod tests {
         let mut w = wallet_for(TEST_MNEMONIC, Network::Bitcoin);
 
         assert_eq!(
-            w.reveal_next_address(KeychainKind::External).address.to_string(),
+            w.reveal_next_address(KeychainKind::External)
+                .address
+                .to_string(),
             "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu",
             "m/84'/0'/0'/0/0 does not match BIP84"
         );
         assert_eq!(
-            w.reveal_next_address(KeychainKind::External).address.to_string(),
+            w.reveal_next_address(KeychainKind::External)
+                .address
+                .to_string(),
             "bc1qnjg0jd8228aq7egyzacy8cys3knf9xvrerkf9g",
             "m/84'/0'/0'/0/1 does not match BIP84"
         );
         assert_eq!(
-            w.reveal_next_address(KeychainKind::Internal).address.to_string(),
+            w.reveal_next_address(KeychainKind::Internal)
+                .address
+                .to_string(),
             "bc1q8c6fshw2dlwun7ekn9qwf37cu2rn755upcp6el",
             "m/84'/0'/0'/1/0 (change) does not match BIP84"
         );
@@ -837,7 +1100,10 @@ mod tests {
         let mut w = wallet_for(TEST_MNEMONIC, Network::Bitcoin);
         let mut seen = std::collections::HashSet::new();
         for _ in 0..25 {
-            let a = w.reveal_next_address(KeychainKind::External).address.to_string();
+            let a = w
+                .reveal_next_address(KeychainKind::External)
+                .address
+                .to_string();
             assert!(seen.insert(a), "an address was handed out twice");
         }
     }
@@ -846,8 +1112,14 @@ mod tests {
     #[test]
     fn receive_and_change_are_separate_chains() {
         let mut w = wallet_for(TEST_MNEMONIC, Network::Bitcoin);
-        let recv = w.reveal_next_address(KeychainKind::External).address.to_string();
-        let change = w.reveal_next_address(KeychainKind::Internal).address.to_string();
+        let recv = w
+            .reveal_next_address(KeychainKind::External)
+            .address
+            .to_string();
+        let change = w
+            .reveal_next_address(KeychainKind::Internal)
+            .address
+            .to_string();
         assert_ne!(recv, change);
     }
 
@@ -870,47 +1142,6 @@ mod tests {
         )
         .unwrap();
         assert_ne!(main_ext, test_ext);
-    }
-
-    // ---- wallet birthday --------------------------------------------------
-
-    /// The real mainnet genesis hash, so this is a round trip through a value
-    /// the bitcoin crate agrees with rather than a made-up string.
-    const A_REAL_HASH: &str = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
-
-    #[test]
-    fn a_birthday_survives_being_written_and_read_back() {
-        let cp = bdk_kyoto::HashCheckpoint::try_from((123_456u32, A_REAL_HASH)).unwrap();
-        let round = parse_birthday(&format_birthday(&cp)).expect("should parse");
-        assert_eq!(round.height, 123_456);
-        assert_eq!(round.hash, cp.hash);
-    }
-
-    #[test]
-    fn surrounding_whitespace_does_not_lose_the_birthday() {
-        let text = format!("  789 : {A_REAL_HASH}  \n");
-        let cp = parse_birthday(&text).expect("should tolerate whitespace");
-        assert_eq!(cp.height, 789);
-    }
-
-    /// A corrupt birthday must be refused, not half-read. Falling back to
-    /// genesis is slow rather than wrong, which is exactly why a silent
-    /// misparse here would go unnoticed.
-    #[test]
-    fn a_damaged_birthday_is_refused_rather_than_guessed() {
-        for bad in [
-            "",
-            "   ",
-            "nonsense",
-            "123456",                                   // no hash
-            &format!(":{A_REAL_HASH}"),                 // no height
-            &format!("-1:{A_REAL_HASH}"),               // negative height
-            &format!("notanumber:{A_REAL_HASH}"),
-            "123456:nothexatall",
-            "123456:00ff",                              // too short for a hash
-        ] {
-            assert!(parse_birthday(bad).is_none(), "accepted {bad:?}");
-        }
     }
 
     #[test]
@@ -939,3 +1170,7 @@ mod tests {
         assert!(int.ends_with("/1/*)"));
     }
 }
+
+#[cfg(test)]
+#[path = "wallet_regtest.rs"]
+mod regtest_tests;

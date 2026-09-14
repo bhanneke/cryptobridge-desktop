@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 
-use cryptobridge_desktop_lib::{node, wallet};
+use cryptobridge_desktop_lib::{credentials, node, wallet};
 use tauri::ipc::{CallbackFn, InvokeBody};
 use tauri::test::{mock_builder, mock_context, noop_assets, INVOKE_KEY};
 use tauri::webview::InvokeRequest;
@@ -25,6 +25,8 @@ fn app() -> tauri::App<tauri::test::MockRuntime> {
         .manage(Arc::new(wallet::WalletState::new()))
         .manage(node::NodeState::new())
         .invoke_handler(tauri::generate_handler![
+            credentials::bisq_credentials_load,
+            credentials::bisq_credentials_save,
             wallet::wallet_status,
             wallet::wallet_create,
             wallet::wallet_reveal_mnemonic,
@@ -61,7 +63,9 @@ fn call(cmd: &str, args: serde_json::Value) -> Result<serde_json::Value, String>
         },
     );
     match res {
-        Ok(b) => Ok(b.deserialize::<serde_json::Value>().unwrap_or(serde_json::Value::Null)),
+        Ok(b) => Ok(b
+            .deserialize::<serde_json::Value>()
+            .unwrap_or(serde_json::Value::Null)),
         Err(v) => Err(v.to_string()),
     }
 }
@@ -94,14 +98,26 @@ fn assert_wired(cmd: &str, args: serde_json::Value) {
 fn every_wallet_command_accepts_what_the_ui_sends() {
     // Exactly the payloads builtin-wallet.js builds.
     assert_wired("wallet_status", serde_json::json!({ "network": "signet" }));
-    assert_wired("wallet_reveal_mnemonic", serde_json::json!({ "network": "signet" }));
+    assert_wired(
+        "wallet_reveal_mnemonic",
+        serde_json::json!({ "network": "signet" }),
+    );
     assert_wired(
         "wallet_confirm_backup",
         serde_json::json!({ "network": "signet", "words": ["abandon", "about"] }),
     );
-    assert_wired("wallet_next_address", serde_json::json!({ "network": "signet" }));
-    assert_wired("wallet_sync_status", serde_json::json!({}));
-    assert_wired("wallet_fee_floor", serde_json::json!({}));
+    assert_wired(
+        "wallet_next_address",
+        serde_json::json!({ "network": "signet" }),
+    );
+    assert_wired(
+        "wallet_sync_status",
+        serde_json::json!({ "network": "signet" }),
+    );
+    assert_wired(
+        "wallet_fee_floor",
+        serde_json::json!({ "network": "signet" }),
+    );
 }
 
 /// The send commands are the ones with multi-word argument names, so they are
@@ -118,7 +134,10 @@ fn the_send_commands_accept_the_ui_argument_names() {
             "feeRateSatVb": 4
         }),
     );
-    assert_wired("wallet_send_confirm", serde_json::json!({ "token": "nope" }));
+    assert_wired(
+        "wallet_send_confirm",
+        serde_json::json!({ "token": "nope" }),
+    );
 }
 
 #[test]
@@ -137,5 +156,18 @@ fn an_unregistered_command_is_refused() {
     assert!(
         err.to_lowercase().contains("not found") || err.to_lowercase().contains("not allowed"),
         "unexpected error for an unknown command: {err}"
+    );
+}
+
+#[test]
+fn credential_commands_accept_the_ui_payload_without_touching_the_keychain() {
+    // Reject the endpoint before keychain access, but after IPC deserialization.
+    assert_wired(
+        "bisq_credentials_load",
+        serde_json::json!({ "node": "http://example.com/api/v1" }),
+    );
+    assert_wired(
+        "bisq_credentials_save",
+        serde_json::json!({ "node": "http://example.com/api/v1", "credentials": { "clientId": "fixture", "clientSecret": "fixture" } }),
     );
 }

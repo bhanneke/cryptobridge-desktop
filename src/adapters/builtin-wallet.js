@@ -83,7 +83,7 @@ export class BuiltinWallet {
   }
 
   async syncStatus() {
-    return this.invoke('wallet_sync_status');
+    return this.invoke('wallet_sync_status', { network: this.network });
   }
 
   /** The balance, and whether it means anything yet.
@@ -118,7 +118,7 @@ export class BuiltinWallet {
   /** Lowest fee rate our peers will relay, in sat/vB. A light client cannot
    *  honestly predict confirmation times, so this is a floor, not advice. */
   async feeFloor() {
-    return this.invoke('wallet_fee_floor');
+    return this.invoke('wallet_fee_floor', { network: this.network });
   }
 
   /** Build a transaction and report what it would cost. Signs nothing. */
