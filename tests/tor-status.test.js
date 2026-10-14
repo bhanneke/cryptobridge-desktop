@@ -84,9 +84,9 @@ test('"bitcoin" is treated as mainnet, since Bisq and BDK spell it differently',
   assert.equal(privacyVerdict(CLEAR_ONLY, 'bitcoin').level, 'block');
 });
 
-test('an unreadable profile warns and tells the user to assume the worst', () => {
+test('an unreadable mainnet profile blocks trading', () => {
   const v = privacyVerdict(null, 'mainnet');
-  assert.equal(v.level, 'warn');
+  assert.equal(v.level, 'block');
   assert.match(v.detail, /Treat it as visible/);
 });
 

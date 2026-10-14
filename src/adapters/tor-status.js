@@ -9,7 +9,7 @@
  *   2. The Bisq node -> trade peers. THIS is where the user's IP is exposed
  *      to the stranger they are sending money to. It is the node's transport,
  *      configured in Bisq, not something this app performs.
- *   3. The wallet -> the Bitcoin network. Does not exist yet (no chain sync).
+ *   3. The wallet -> the Bitcoin network. Rust/Kyoto uses compact filters over Tor.
  *
  * We cannot make the node use Tor -- that is `network.supportedTransportTypes`
  * in the node's own config. What we can do is refuse to pretend we don't know.
@@ -73,7 +73,7 @@ export function privacyVerdict(profile, network) {
 
   if (!c.known) {
     return {
-      level: 'warn',
+      level: mainnet ? 'block' : 'warn',
       headline: 'Could not confirm how your node reaches the network',
       detail:
         'The node did not report its transport, so we cannot tell whether your ' +

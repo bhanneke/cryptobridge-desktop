@@ -60,6 +60,7 @@
             <p id="resumeDetail" class="resume-detail"></p>
           </div>
           <button id="resumeBtn" type="button" class="btn-secondary">Open it</button>
+        <button id="resolveIntentBtn" class="btn-secondary" hidden>I checked and resolved this request in Bisq</button>
         </div>
 
         <div class="relative flex flex-col items-center text-center gap-8 py-8">
@@ -389,7 +390,7 @@
 
     <footer class="max-w-3xl mx-auto px-4 sm:px-6 mt-16">
       <div class="flex flex-col sm:flex-row items-center justify-between gap-2 border-t border-line pt-5 pb-2 text-[12px] text-muted">
-        <span>CryptoBridge Desktop — prototype on a mock backend. No real money moves.</span>
+        <span>CryptoBridge Desktop — check the connected backend and network before trading.</span>
         <a href="https://github.com/bhanneke/cryptobridge-desktop" class="inline-flex items-center gap-1 hover:text-ink2 transition" target="_blank" rel="noopener">
           <span class="material-symbols-outlined text-[14px]">code</span> Source on GitHub
         </a>
@@ -525,6 +526,8 @@
       </div>
 
       <!-- Phase A: show IBAN + GiroCode, wait for the user to pay -->
+      <p id="payError" role="alert"></p>
+      <button id="payRefreshDetails" class="btn-secondary" hidden>Refresh corrected bank details</button>
       <div id="payPhasePay">
         <div class="pay-grid">
           <div class="pay-row"><span>Amount</span><strong id="payAmount" class="tabular-nums">€ 0,00</strong></div>

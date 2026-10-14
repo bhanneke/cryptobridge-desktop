@@ -129,6 +129,8 @@ await page.click('#confirmBridgeBtn');
 
 // --- Payment screen (the fiat leg) ----------------------------------------
 await page.waitForSelector('#paymentOverlay.show', { timeout: 15000 });
+// The same dialog also shows the earlier waiting-for-seller phase.
+await page.waitForSelector('#payPhasePay', { state: 'visible', timeout: 15000 });
 ok(true, 'payment screen appears at the fiat leg');
 ok(!!(await page.$('#payQr svg')), 'GiroCode QR is rendered (self-contained SVG)');
 const ibanTxt = await page.textContent('#payIban');

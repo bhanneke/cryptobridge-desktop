@@ -1,3 +1,5 @@
+> Historical audit: this predates the built-in signing wallet and September 2026 repair pass. See [current repair validation](REPAIR_VALIDATION.md) for the expanded trust boundaries and remaining checks.
+
 # Security audit — 2026-07-25
 
 First full adversarial review of CryptoBridge Desktop, deferred until there was

@@ -166,7 +166,10 @@ fn check_onion_host(name: &str) -> Result<(), String> {
             label.len()
         ));
     }
-    if !label.bytes().all(|b| b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b)) {
+    if !label
+        .bytes()
+        .all(|b| b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b))
+    {
         return Err(format!(
             "onion address {name:?} contains characters outside base32 (a-z, 2-7)"
         ));
@@ -403,6 +406,29 @@ pub async fn ws_connect(
     raw_url: &str,
     headers: Option<&std::collections::HashMap<String, String>>,
 ) -> Result<BisqWs, String> {
+    let (_, dest) = check_url(raw_url, Kind::Ws)?;
+    let deadline = if dest == Destination::Onion {
+        TOR_TIMEOUT
+    } else {
+        HTTP_TIMEOUT
+    };
+    ws_connect_with_timeout(raw_url, headers, deadline).await
+}
+
+async fn ws_connect_with_timeout(
+    raw_url: &str,
+    headers: Option<&std::collections::HashMap<String, String>>,
+    deadline: std::time::Duration,
+) -> Result<BisqWs, String> {
+    tokio::time::timeout(deadline, ws_connect_inner(raw_url, headers))
+        .await
+        .map_err(|_| "Bisq WebSocket connection/handshake timed out".to_string())?
+}
+
+async fn ws_connect_inner(
+    raw_url: &str,
+    headers: Option<&std::collections::HashMap<String, String>>,
+) -> Result<BisqWs, String> {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue};
 
@@ -431,14 +457,26 @@ pub async fn ws_connect(
     // Open the socket ourselves so it goes exactly where the check said. The
     // onion branch must never fall back to a direct connection: that would
     // put a request we promised to send over Tor onto the clearnet.
-    let host = target.host_str().ok_or("WebSocket URL has no host")?.to_string();
-    let port = target.port_or_known_default().ok_or("WebSocket URL has no port")?;
+    let host = target
+        .host_str()
+        .ok_or("WebSocket URL has no host")?
+        .to_string();
+    let port = target
+        .port_or_known_default()
+        .ok_or("WebSocket URL has no port")?;
 
     let io: Box<dyn WsIo> = match dest {
         Destination::Loopback => {
             let tcp = tokio::time::timeout(
                 HTTP_TIMEOUT,
-                tokio::net::TcpStream::connect((host.as_str(), port)),
+                tokio::net::TcpStream::connect(std::net::SocketAddr::new(
+                    match target.host() {
+                        Some(url::Host::Ipv4(ip)) => ip.into(),
+                        Some(url::Host::Ipv6(ip)) => ip.into(),
+                        _ => return Err("loopback URL must contain a literal IP".into()),
+                    },
+                    port,
+                )),
             )
             .await
             .map_err(|_| format!("Bisq WebSocket timed out connecting to {target}"))?
@@ -468,6 +506,47 @@ pub async fn ws_connect(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn websocket_upgrade_has_a_deadline_and_releases_the_socket() {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let peer = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 2048];
+            assert!(socket.read(&mut request).await.unwrap() > 0);
+            // Deliberately never answer the HTTP Upgrade.
+            assert_eq!(socket.read(&mut request).await.unwrap(), 0);
+        });
+        let err = ws_connect_with_timeout(
+            &format!("ws://127.0.0.1:{port}/websocket"),
+            None,
+            std::time::Duration::from_millis(100),
+        )
+        .await
+        .err()
+        .expect("handshake must time out");
+        assert!(err.contains("timed out"));
+        tokio::time::timeout(std::time::Duration::from_secs(1), peer)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn websocket_connects_to_literal_ipv6_without_dns() {
+        let listener = tokio::net::TcpListener::bind("[::1]:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let peer = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            tokio_tungstenite::accept_async(socket).await.unwrap()
+        });
+        let _socket = ws_connect(&format!("ws://[::1]:{port}/websocket"), None)
+            .await
+            .unwrap();
+        let _peer = peer.await.unwrap();
+    }
 
     fn http_ok(u: &str) -> bool {
         check_url(u, Kind::Http).is_ok()
@@ -567,7 +646,11 @@ mod tests {
 
     #[test]
     fn v3_onion_addresses_are_accepted_and_marked_as_such() {
-        let (_, dest) = check_url(&format!("http://{ONION}.onion:8090/api/v1/trades"), Kind::Http).unwrap();
+        let (_, dest) = check_url(
+            &format!("http://{ONION}.onion:8090/api/v1/trades"),
+            Kind::Http,
+        )
+        .unwrap();
         assert_eq!(dest, Destination::Onion);
         let (_, dest) = check_url(&format!("ws://{ONION}.onion:8090/websocket"), Kind::Ws).unwrap();
         assert_eq!(dest, Destination::Onion);
@@ -586,14 +669,21 @@ mod tests {
             "example.com.onion.co",
         ] {
             let u = format!("http://{host}:8090/api/v1/trades");
-            assert!(check_url(&u, Kind::Http).is_err(), "hostname accepted: {host}");
+            assert!(
+                check_url(&u, Kind::Http).is_err(),
+                "hostname accepted: {host}"
+            );
         }
     }
 
     #[test]
     fn v2_onion_addresses_are_refused() {
         // 16 characters: the deprecated v2 format.
-        let err = check_url("http://abcdefghijklmnop.onion:8090/api/v1/trades", Kind::Http).unwrap_err();
+        let err = check_url(
+            "http://abcdefghijklmnop.onion:8090/api/v1/trades",
+            Kind::Http,
+        )
+        .unwrap_err();
         assert!(err.contains("v3"), "unexpected error: {err}");
     }
 
@@ -602,7 +692,11 @@ mod tests {
         // 56 characters, but '1', '8', '9' and '0' are not in base32.
         let bad = "abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuv10";
         assert_eq!(bad.len(), 56);
-        let err = check_url(&format!("http://{bad}.onion:8090/api/v1/trades"), Kind::Http).unwrap_err();
+        let err = check_url(
+            &format!("http://{bad}.onion:8090/api/v1/trades"),
+            Kind::Http,
+        )
+        .unwrap_err();
         assert!(err.contains("base32"), "unexpected error: {err}");
     }
 
@@ -613,9 +707,17 @@ mod tests {
         // Scheme.
         assert!(check_url(&format!("https://{ONION}.onion:8090/api/v1/x"), Kind::Http).is_err());
         // Embedded credentials.
-        assert!(check_url(&format!("http://u:p@{ONION}.onion:8090/api/v1/x"), Kind::Http).is_err());
+        assert!(check_url(
+            &format!("http://u:p@{ONION}.onion:8090/api/v1/x"),
+            Kind::Http
+        )
+        .is_err());
         // Dot segments.
-        assert!(check_url(&format!("http://{ONION}.onion:8090/api/v1/%2e%2e/admin"), Kind::Http).is_err());
+        assert!(check_url(
+            &format!("http://{ONION}.onion:8090/api/v1/%2e%2e/admin"),
+            Kind::Http
+        )
+        .is_err());
     }
 
     /// An onion request must never be answered by the direct client: that
@@ -644,11 +746,19 @@ mod tests {
         let out = check_headers(Some(&ok)).unwrap();
         assert_eq!(out.len(), 2);
         // Normalised to lower case so the allowlist cannot be case-dodged.
-        assert!(out.iter().all(|(k, _)| k.chars().all(|c| !c.is_uppercase())));
+        assert!(out
+            .iter()
+            .all(|(k, _)| k.chars().all(|c| !c.is_uppercase())));
 
         // Anything outside the allowlist is refused — the webview does not get
         // to choose arbitrary headers just because it can reach this proxy.
-        for bad in ["Authorization", "Cookie", "Host", "X-Forwarded-For", "content-length"] {
+        for bad in [
+            "Authorization",
+            "Cookie",
+            "Host",
+            "X-Forwarded-For",
+            "content-length",
+        ] {
             let mut m = HashMap::new();
             m.insert(bad.to_string(), "x".to_string());
             assert!(check_headers(Some(&m)).is_err(), "{bad} should be refused");
@@ -659,10 +769,19 @@ mod tests {
     fn header_values_cannot_carry_control_characters() {
         use std::collections::HashMap;
         // CR/LF in a header value is how header injection works.
-        for bad in ["a\r\nX-Evil: 1", "a\nb", "a\0b", "", &"x".repeat(MAX_HEADER_VALUE + 1)] {
+        for bad in [
+            "a\r\nX-Evil: 1",
+            "a\nb",
+            "a\0b",
+            "",
+            &"x".repeat(MAX_HEADER_VALUE + 1),
+        ] {
             let mut m = HashMap::new();
             m.insert("Bisq-Session-Id".to_string(), bad.to_string());
-            assert!(check_headers(Some(&m)).is_err(), "{bad:?} should be refused");
+            assert!(
+                check_headers(Some(&m)).is_err(),
+                "{bad:?} should be refused"
+            );
         }
     }
 

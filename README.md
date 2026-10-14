@@ -5,7 +5,7 @@
 **Non-custodial desktop companion for P2P bitcoin on-ramps.**
 
 Tauri shell · the [CryptoBridge](https://github.com/bhanneke/crypto-onramp) design system, CDN-free ·
-a pluggable `OnrampAdapter` with a working mock backend, so the UI is real before Bisq is wired in.
+a Bisq 2 adapter, a demo backend, and an on-device Bitcoin wallet.
 
 [Design prototype](https://bhanneke.github.io/crypto-onramp/) · [Implementation plan](https://github.com/bhanneke/crypto-onramp/blob/main/docs/IMPLEMENTATION_PLAN.md) · [Report an issue](../../issues)
 
@@ -16,12 +16,11 @@ a pluggable `OnrampAdapter` with a working mock backend, so the UI is real befor
 
 </div>
 
-> **Status: pre-release.** A real Bisq 2 backend is wired in and live-verified — a full
-> buyer-side BTC/EUR trade runs end to end through the adapter, and inside the desktop app every
-> byte of that traffic goes through the Rust shell so the webview keeps `connect-src 'self'`.
-> The UI is now the real flow throughout: the prototype's demo fiction has been **deleted**, not
-> hidden behind a flag. What is *not* done: node supervision, Tor, reproducible builds and
-> no-US distribution. Do not point this at mainnet. No real money has moved.
+> **Status: pre-release.** Includes a Bisq 2 buyer flow and a built-in BIP84 wallet.
+> The wallet generates and signs with keys held on this computer. Bisq credentials live
+> in the OS keychain; trade recovery records live in the app's local storage.
+> See [repair validation and remaining release checks](docs/REPAIR_VALIDATION.md).
+> This is not a mainnet release approval.
 
 ## What this is
 
@@ -53,7 +52,7 @@ The UI never talks to a backend directly. `MockAdapter` implements the interface
 in-memory offer book, a trade state machine that walks the states a real Bisq trade has
 (`OFFER_TAKEN → AWAITING_FIAT_PAYMENT → FIAT_SENT → FIAT_RECEIVED → BTC_RELEASED → COMPLETE`),
 EPC069-12 (GiroCode) payment instructions for the fiat leg, and a sats-denominated wallet.
-When the `BisqAdapter` lands, the UI does not change.
+The Bisq adapter uses the same interface and adds explicit receipt confirmation and restart recovery.
 
 ## Run it
 
@@ -78,6 +77,7 @@ npm run build      # signed-nothing local bundle (dmg/app on macOS, etc.)
 ```bash
 npm test           # adapter + transport + QR unit tests (node:test, no deps)
 npm run test:e2e   # full-flow Playwright smoke against the system Chrome
+npm run test:recovery-ui  # restart, privacy and payment retry regressions
 cargo test --manifest-path src-tauri/Cargo.toml   # loopback-proxy allowlist + live transport
 ```
 
@@ -97,11 +97,11 @@ Ground rules from the plan, enforced by construction here:
 
 | Bright line | How this repo holds it |
 |---|---|
-| No custody | The receive address is the user's own, typed in step 3 and checksum-validated for the right chain; we generate no address and hold no keys |
+| User-controlled keys | In built-in mode, Rust generates a BIP39 seed, stores it in the OS keychain, derives BIP84 addresses, and signs approved sends. External-wallet mode accepts a checksum-validated address. |
 | No fiat handling | Fiat leg is described (`getPaymentInstructions` → IBAN + EPC QR), never executed |
 | No order intermediation | The offer book is the network's. We rank it cheapest-first for display and take the one the user picks — no matching, no brokering |
 | No yield, no advice | No such screen exists any more (see below); the e2e suite fails if one returns |
-| No server in the trade path | Static webview + local adapter. The webview cannot open a socket at all — `connect-src` stays `'self'` and Bisq traffic crosses IPC to a Rust proxy pinned to loopback ([`proxy.rs`](src-tauri/src/proxy.rs)) |
+| No server in the trade path | Static webview + local adapter. The webview cannot open a socket at all — `connect-src` stays `'self'` and Bisq traffic crosses IPC to a Rust proxy restricted to literal loopback addresses and v3 onion services ([`proxy.rs`](src-tauri/src/proxy.rs)) |
 | No CDN / phone-home | Fonts vendored ([`src/vendor`](src/vendor)), Tailwind compiled to a static file |
 | Open source | AGPL-3.0, same family as Bisq |
 
