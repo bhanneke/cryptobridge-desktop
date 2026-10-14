@@ -77,6 +77,27 @@ fn emit_ws(app: &AppHandle, id: u32, kind: &'static str, data: Option<String>) {
     let _ = app.emit(WS_EVENT, WsEvent { id, kind, data });
 }
 
+/// Take one of `max` slots atomically, or fail if none are left.
+///
+/// The check and the increment must be a single atomic step: checking first
+/// and incrementing after leaves a window in which any number of concurrent
+/// callers all see a free slot (audit finding 5). This used
+/// `AtomicUsize::fetch_update`, which Rust 1.99 deprecates in favour of
+/// `try_update` -- a name older compilers do not have. A compare-and-swap loop
+/// is what both do internally and builds on every toolchain.
+fn reserve_slot(counter: &AtomicUsize, max: usize) -> Result<(), ()> {
+    let mut current = counter.load(Ordering::SeqCst);
+    loop {
+        if current >= max {
+            return Err(());
+        }
+        match counter.compare_exchange_weak(current, current + 1, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return Ok(()),
+            Err(actual) => current = actual,
+        }
+    }
+}
+
 // --- Commands ---------------------------------------------------------------
 
 #[tauri::command]
@@ -103,11 +124,7 @@ async fn bisq_ws_open(
     // Checking the map here and inserting after the await leaves a window in
     // which any number of concurrent calls all pass the check, so the cap
     // bounded nothing. Reserve atomically, and release on every exit path.
-    state
-        .reserved
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
-            if n >= proxy::MAX_SOCKETS { None } else { Some(n + 1) }
-        })
+    reserve_slot(&state.reserved, proxy::MAX_SOCKETS)
         .map_err(|_| format!("too many open sockets ({} max)", proxy::MAX_SOCKETS))?;
 
     let stream = match proxy::ws_connect(&url, headers.as_ref()).await {
@@ -235,4 +252,40 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod slot_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn slots_run_out_at_the_limit_and_come_back_on_release() {
+        let c = AtomicUsize::new(0);
+        for _ in 0..3 {
+            assert!(reserve_slot(&c, 3).is_ok());
+        }
+        assert!(reserve_slot(&c, 3).is_err(), "a fourth slot was handed out");
+        c.fetch_sub(1, Ordering::SeqCst);
+        assert!(reserve_slot(&c, 3).is_ok(), "a released slot was not reusable");
+    }
+
+    /// The property audit finding 5 was about: however many callers race,
+    /// no more than `max` ever get a slot.
+    #[test]
+    fn concurrent_callers_never_exceed_the_limit() {
+        let c = Arc::new(AtomicUsize::new(0));
+        let max = 8;
+        let won: usize = (0..64)
+            .map(|_| {
+                let c = Arc::clone(&c);
+                std::thread::spawn(move || reserve_slot(&c, max).is_ok())
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|h| h.join().unwrap() as usize)
+            .sum();
+        assert_eq!(won, max, "{won} callers got a slot, limit is {max}");
+        assert_eq!(c.load(Ordering::SeqCst), max);
+    }
 }
