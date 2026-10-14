@@ -36,6 +36,23 @@ impl TorState {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Kill the Tor we started, if any. Called when the app exits; a Tor the
+    /// user was already running is never ours and is left alone.
+    pub fn shutdown(&self) {
+        if let Ok(mut guard) = self.child.lock() {
+            if let Some(mut child) = guard.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+}
+
+impl Drop for TorState {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
 }
 
 #[derive(Serialize)]
@@ -260,6 +277,22 @@ mod tests {
             "did not find tor where tauri build puts it"
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The Tor we started must not outlive the app either.
+    #[test]
+    fn shutdown_really_kills_the_tor_process() {
+        let state = TorState::new();
+        let child = std::process::Command::new("sleep").arg("60").spawn().unwrap();
+        let pid = child.id();
+        *state.child.lock().unwrap() = Some(child);
+        state.shutdown();
+        let alive = std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(!alive, "process {pid} survived shutdown");
     }
 
     /// The one place this module decides what to execute.

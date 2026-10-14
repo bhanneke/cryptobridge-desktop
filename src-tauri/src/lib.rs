@@ -250,8 +250,17 @@ pub fn run() {
             tor::tor_start,
             tor::tor_stop
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Stop the node and Tor we started when the app goes away, so
+            // neither keeps listening after the user has quit. Drop impls back
+            // this up, but managed state is not guaranteed to drop at exit.
+            if let tauri::RunEvent::Exit = event {
+                app.state::<node::NodeState>().shutdown();
+                app.state::<tor::TorState>().shutdown();
+            }
+        });
 }
 
 #[cfg(test)]

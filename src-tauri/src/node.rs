@@ -28,8 +28,10 @@ use std::sync::Mutex;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Runtime, State};
 
-/// The loopback port we ask the node to serve its API on.
-const API_PORT: u16 = 8090;
+/// Bisq's default API port. A node we start listens elsewhere: a well-known
+/// port is the first one anything probing the machine would try. See
+/// `api_port`.
+const BISQ_DEFAULT_PORT: u16 = 8090;
 
 #[derive(Default)]
 pub struct NodeState {
@@ -39,6 +41,26 @@ pub struct NodeState {
 impl NodeState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Kill the node we started, if any. Called when the app exits.
+    ///
+    /// Without this the node outlives the app: dropping a `Child` in Rust
+    /// does not kill the process. The user would quit CryptoBridge and leave
+    /// a Bisq node running, its WebSocket open, while they go on browsing.
+    pub fn shutdown(&self) {
+        if let Ok(mut guard) = self.child.lock() {
+            if let Some(mut child) = guard.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+}
+
+impl Drop for NodeState {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 
@@ -147,6 +169,51 @@ fn find_java_home<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     None
 }
 
+/// The loopback port for a node we start: chosen once per install, at random,
+/// and remembered.
+///
+/// Random so the node's local API is not on Bisq's well-known port, which is
+/// the first thing anything probing the machine would try -- the same reason
+/// the node is stopped when the app exits. Remembered because a saved
+/// connection must still work after a restart.
+fn api_port<R: Runtime>(app: &AppHandle<R>) -> Result<u16, String> {
+    api_port_in(&node_data_dir(app)?)
+}
+
+/// `api_port`, against a given directory, so it can be tested without
+/// touching the real app data dir.
+fn api_port_in(dir: &Path) -> Result<u16, String> {
+    let path = dir.join("api-port");
+    if let Some(port) = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| t.trim().parse::<u16>().ok())
+        .filter(|p| *p >= 1024 && *p != BISQ_DEFAULT_PORT)
+    {
+        return Ok(port);
+    }
+    let port = pick_free_port()?;
+    std::fs::write(&path, port.to_string())
+        .map_err(|e| format!("cannot record the node port: {e}"))?;
+    Ok(port)
+}
+
+/// An unused loopback port, by asking the OS for one. The listener is dropped
+/// straight away; the brief window before the node binds it is harmless here.
+fn pick_free_port() -> Result<u16, String> {
+    for _ in 0..8 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")
+            .map_err(|e| format!("no free loopback port: {e}"))?;
+        let port = listener
+            .local_addr()
+            .map_err(|e| format!("no free loopback port: {e}"))?
+            .port();
+        if port != BISQ_DEFAULT_PORT {
+            return Ok(port);
+        }
+    }
+    Err("could not find a free loopback port".into())
+}
+
 fn node_data_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let dir = app
         .path()
@@ -201,7 +268,9 @@ pub fn node_status<R: Runtime>(app: AppHandle<R>, state: State<'_, NodeState>) -
         tor,
         running,
         pid,
-        api_url: format!("http://127.0.0.1:{API_PORT}/api/v1"),
+        api_url: api_port(&app)
+            .map(|p| format!("http://127.0.0.1:{p}/api/v1"))
+            .unwrap_or_default(),
         detail,
     }
 }
@@ -252,13 +321,14 @@ pub fn node_start<R: Runtime>(
     // Tor unless explicitly told otherwise. This is the setting that decides
     // whether trade peers can see the user's IP address.
     let transport = if clearnet.unwrap_or(false) { "CLEAR" } else { "TOR" };
+    let port = api_port(&app)?;
     let java_opts = format!(
         "-Dapplication.network.supportedTransportTypes.0={transport} \
          -Dapplication.api.accessTransportType=CLEAR \
          -Dapplication.api.server.restEnabled=true \
          -Dapplication.api.server.websocketEnabled=true \
          -Dapplication.api.server.bind.host=127.0.0.1 \
-         -Dapplication.api.server.bind.port={API_PORT}"
+         -Dapplication.api.server.bind.port={port}"
     );
 
     let child = Command::new(&binary)
@@ -379,6 +449,52 @@ mod tests {
             "did not find the runtime where tauri build puts it"
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---- exposure reduction ------------------------------------------------
+
+    #[test]
+    fn the_api_port_is_random_remembered_and_never_bisqs_default() {
+        let dir = std::env::temp_dir().join(format!("cb-port-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let first = api_port_in(&dir).unwrap();
+        assert!(first >= 1024, "privileged port {first}");
+        assert_ne!(first, BISQ_DEFAULT_PORT, "used Bisq's guessable default");
+        assert_eq!(api_port_in(&dir).unwrap(), first, "a saved connection would break on restart");
+
+        // A stored 8090 (or rubbish) is replaced, not trusted.
+        for stored in ["8090", "not a port", "80", ""] {
+            std::fs::write(dir.join("api-port"), stored).unwrap();
+            let p = api_port_in(&dir).unwrap();
+            assert!(p >= 1024 && p != BISQ_DEFAULT_PORT, "kept {stored:?} -> {p}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The node must not outlive the app. Uses a real process, because the
+    /// point is that it is actually gone, not that the code path ran.
+    #[test]
+    fn shutdown_really_kills_the_node_process() {
+        let state = NodeState::new();
+        let child = std::process::Command::new("sleep").arg("60").spawn().unwrap();
+        let pid = child.id();
+        *state.child.lock().unwrap() = Some(child);
+
+        state.shutdown();
+
+        assert!(state.child.lock().unwrap().is_none(), "handle not cleared");
+        let alive = std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(!alive, "process {pid} survived shutdown");
+    }
+
+    #[test]
+    fn shutdown_with_nothing_running_is_harmless() {
+        NodeState::new().shutdown();
     }
 
     /// The one place this app decides what to execute. If it ever accepts a

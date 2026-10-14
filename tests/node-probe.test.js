@@ -82,10 +82,10 @@ test('the whole 127/8 block is loopback, and 127 lookalikes are not', () => {
 // ---- probeNode: the three failures a user can act on ---------------------
 
 test('a reachable node reports its version', async () => {
-  const t = transportFor({ '/settings/version': { status: 200, body: JSON.stringify({ version: '2.1.9' }) } });
+  const t = transportFor({ '/settings/version': { status: 200, body: JSON.stringify({ version: '2.1.13' }) } });
   const r = await probeNode(t, 'http://127.0.0.1:8090/api/v1');
   assert.equal(r.ok, true);
-  assert.equal(r.version, '2.1.9');
+  assert.equal(r.version, '2.1.13');
 });
 
 test('nothing listening is reported as unreachable, not as a bad node', async () => {
@@ -121,7 +121,7 @@ test('a 200 that is not JSON is not mistaken for a node', async () => {
 });
 
 test('the probe never writes — only GETs, and only read-only paths', async () => {
-  const t = transportFor({ '/settings/version': { status: 200, body: JSON.stringify({ version: '2.1.9' }) } });
+  const t = transportFor({ '/settings/version': { status: 200, body: JSON.stringify({ version: '2.1.13' }) } });
   await probeNode(t, 'http://127.0.0.1:8090/api/v1');
   for (const c of t.calls) {
     assert.equal(c.method, 'GET', `probe must not ${c.method}`);
@@ -163,4 +163,14 @@ test('allowing onion did not reopen ordinary hostnames', () => {
 
 test('a v2 onion is refused with a reason, not a generic error', () => {
   assert.match(normaliseNodeUrl('abcdefghijklmnop.onion:8090').error, /not a v3 onion address/);
+});
+
+/* 2.1.12 and 2.1.13 are mandatory updates: an older node cannot trade. */
+test('a node older than 2.1.12 is refused with a reason the user can act on', async () => {
+  const t = transportFor({ '/settings/version': { status: 200, body: JSON.stringify({ version: '2.1.11' }) } });
+  const r = await probeNode(t, 'http://127.0.0.1:8090/api/v1');
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'too-old');
+  assert.match(r.message, /2\.1\.12 or newer/);
+  assert.match(r.message, /Update Bisq/);
 });
