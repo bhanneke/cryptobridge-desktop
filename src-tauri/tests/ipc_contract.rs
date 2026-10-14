@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 
-use cryptobridge_desktop_lib::{credentials, node, wallet};
+use cryptobridge_desktop_lib::{credentials, node, tor, wallet};
 use tauri::ipc::{CallbackFn, InvokeBody};
 use tauri::test::{mock_builder, mock_context, noop_assets, INVOKE_KEY};
 use tauri::webview::InvokeRequest;
@@ -24,6 +24,7 @@ fn app() -> tauri::App<tauri::test::MockRuntime> {
     mock_builder()
         .manage(Arc::new(wallet::WalletState::new()))
         .manage(node::NodeState::new())
+        .manage(tor::TorState::new())
         .invoke_handler(tauri::generate_handler![
             credentials::bisq_credentials_load,
             credentials::bisq_credentials_save,
@@ -39,6 +40,8 @@ fn app() -> tauri::App<tauri::test::MockRuntime> {
             node::node_status,
             node::node_start,
             node::node_stop,
+            tor::tor_status,
+            tor::tor_stop,
         ])
         .build(mock_context(noop_assets()))
         .expect("failed to build the mock app")
@@ -144,7 +147,9 @@ fn the_send_commands_accept_the_ui_argument_names() {
 fn the_node_commands_are_wired() {
     assert_wired("node_status", serde_json::json!({}));
     assert_wired("node_stop", serde_json::json!({}));
-    // Deliberately not node_start: it would spawn a real process.
+    assert_wired("tor_status", serde_json::json!({}));
+    assert_wired("tor_stop", serde_json::json!({}));
+    // Deliberately not node_start or tor_start: both spawn real processes.
 }
 
 /// A command we never registered must not be reachable. If this ever passes
