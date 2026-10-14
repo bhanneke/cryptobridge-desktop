@@ -17,6 +17,7 @@ pub mod proxy;
 pub mod node;
 pub mod tor;
 pub mod wallet;
+pub mod credentials;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
@@ -213,6 +214,8 @@ pub fn run() {
             bisq_ws_open,
             bisq_ws_send,
             bisq_ws_close,
+            credentials::bisq_credentials_load,
+            credentials::bisq_credentials_save,
             wallet::wallet_status,
             wallet::wallet_create,
             wallet::wallet_reveal_mnemonic,
