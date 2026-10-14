@@ -20,6 +20,8 @@
  *    the flag to drive an unattended trade to COMPLETE.
  */
 
+import { offerRejection, clampDeviation, DEFAULT_MAX_DEVIATION } from './offer-checks.js';
+import { isSupportedBisqVersion, unsupportedVersionMessage } from './bisq-version.js';
 import { nodeKey } from './storage.js';
 import { privacyVerdict } from './tor-status.js';
 import { OnrampAdapter, TradeState } from './onramp-adapter.js';
@@ -160,6 +162,8 @@ export class BisqAdapter extends OnrampAdapter {
     this.status = 'connecting';
     this.statusSubs = new Set();
     this.tradeSubs = new Map();      // tradeId -> Set<cb>
+    this.maxTradePriceDeviation = DEFAULT_MAX_DEVIATION;  // replaced by the node's own setting in init()
+    this.nodeVersion = null;
     this.tradeProps = new Map();     // tradeId -> merged {tradeState, paymentAccountData, ...}
     this.tradeSnapshotSeen = false;  // has the node sent its initial trade snapshot yet?
     this.lastEmitted = new Map();    // tradeId -> last mapped TradeState emitted
@@ -332,6 +336,12 @@ export class BisqAdapter extends OnrampAdapter {
     // Authenticate first if this node wants it: every call below, and the
     // WebSocket handshake, need the session headers.
     if (this.pairingCode || this.credentials) await this._authenticate();
+    // Refuse a node too old to trade before creating anything on it. Needs
+    // the session above: an authorization-required node answers 403 here
+    // until then.
+    await this._checkNodeVersion();
+    // The node owner's own limit on how far below market an offer may be.
+    await this._loadPriceLimit();
     // Reachability + market rate in one call.
     await this._refreshRate();
     // Ensure a buyer identity exists (buyers need no reputation).
@@ -347,6 +357,25 @@ export class BisqAdapter extends OnrampAdapter {
     }
     await this.checkPrivacy();
     await this._openWs();
+  }
+
+  async _checkNodeVersion() {
+    const res = await this._req('GET', '/settings/version');
+    const version = res?.data?.version ?? null;
+    this.nodeVersion = version;
+    if (!isSupportedBisqVersion(version)) throw new Error(unsupportedVersionMessage(version));
+  }
+
+  /** Bisq's maxTradePriceDeviation, from the node's own settings. A failure
+   *  here must not stop trading altogether, so it falls back to Bisq's
+   *  default -- never to "no limit". */
+  async _loadPriceLimit() {
+    try {
+      const res = await this._req('GET', '/settings');
+      this.maxTradePriceDeviation = clampDeviation(res?.data?.maxTradePriceDeviation);
+    } catch {
+      this.maxTradePriceDeviation = DEFAULT_MAX_DEVIATION;
+    }
   }
 
   async _refreshRate() {
@@ -434,8 +463,16 @@ export class BisqAdapter extends OnrampAdapter {
           || !o?.baseSidePaymentMethodSpecs?.some(s => s.paymentMethod === 'MAIN_CHAIN')) continue;
       if (o?.direction !== 'SELL') continue;             // we BUY BTC → take SELL offers
       const priced = this._priceOffer(o);
-      if (priced.priceEurPerBtc == null) continue;       // can't price it safely → hide it
       const { minEur, maxEur } = this._amountRange(o);
+      // Every number here came from the seller's client. Hide anything that
+      // is not a sane, positive offer, or that undercuts the market by more
+      // than the node owner allows -- see offer-checks.js for why the buyer
+      // has no other protection against a bait price.
+      const rejected = offerRejection(
+        { priceEurPerBtc: priced.priceEurPerBtc, minEur, maxEur },
+        { rate: this.rate, maxDeviation: this.maxTradePriceDeviation },
+      );
+      if (rejected) continue;
       const paymentMethod = 'SEPA';
       const offer = {
         id: o.id,

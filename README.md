@@ -72,6 +72,11 @@ npm run dev        # Tauri dev window
 npm run build      # signed-nothing local bundle (dmg/app on macOS, etc.)
 ```
 
+**Bisq node:** the Bisq backend needs **Bisq 2 v2.1.12 or newer**, and the app refuses older
+nodes with a message saying so. Bisq made 2.1.12 and 2.1.13 mandatory updates, so an older node
+can no longer trade, and 2.1.12 fixed the reputation checks this app relies on as its only
+protection against a bad seller. Last verified end to end against v2.1.13.
+
 **Tests:**
 
 ```bash

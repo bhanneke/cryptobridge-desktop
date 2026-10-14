@@ -11,6 +11,8 @@
  * listening, something listening that isn't Bisq, and a Bisq node that wants
  * a pairing code — because "could not connect" is useless advice. */
 
+import { isSupportedBisqVersion, unsupportedVersionMessage } from './bisq-version.js';
+
 /** Bisq answers 403 for both an absent and an expired session: authorization
  *  denies the call before authentication ever marks the caller. Measured
  *  against a real node; see bisq-adapter.js. */
@@ -147,6 +149,12 @@ export async function probeNode(transport, restBaseUrl, { headers } = {}) {
       reason: 'not-bisq',
       message: 'Something answered, but it did not look like a Bisq node.',
     };
+  }
+
+  // An authorization-required node never reaches this line (it answers 403
+  // above), so the adapter repeats this check after pairing.
+  if (!isSupportedBisqVersion(version)) {
+    return { ok: false, reason: 'too-old', version, message: unsupportedVersionMessage(version) };
   }
 
   return { ok: true, version };

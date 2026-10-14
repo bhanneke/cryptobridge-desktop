@@ -45,7 +45,7 @@ try {
             const data = p.endsWith('/access/session') ? { sessionId: 'fixture-session' }
               : p.endsWith('/market-price/quotes') ? { quotes: { EUR: { value: 1000000000 } } }
               : p.endsWith('/user-identities/ids') ? ['fixture-identity']
-              : p.endsWith('/settings/version') ? { version: 'fixture' }
+              : p.endsWith('/settings/version') ? { version: '2.1.13' }   // a real node reports a real version; 'fixture' is now refused
               : p.endsWith('/user-identities/selected/user-profile') ? { networkId: { addressByTransportTypeMap: { map: { [opts.clear ? 'CLEAR' : 'TOR']: { host: 'fixture' } } } } }
               : p.endsWith('/offers') ? [] : {};
             return { status: 200, body: JSON.stringify(data) };

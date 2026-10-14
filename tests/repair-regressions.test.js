@@ -163,6 +163,9 @@ test('mainnet privacy gate runs on startup and before purchase', async () => {
   a.getPrivacyStatus = async () => ({ level: 'block', headline: 'CLEAR', detail: 'Use Tor' });
   a._req = async (method, path) => {
     if (method === 'POST') posts++;
+    // A real node always reports its version; init() refuses one that does
+    // not (or that is older than 2.1.12) before it reaches the privacy gate.
+    if (path === '/settings/version') return { data: { version: '2.1.13' } };
     return { data: path.endsWith('/ids') ? ['fixture'] : {} };
   };
   await assert.rejects(a.init(), /CLEAR/);
